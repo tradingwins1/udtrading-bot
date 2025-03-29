@@ -1,40 +1,24 @@
+# smc_strategy.py
 
 import pandas as pd
 
 def smc_strategy(df):
-    if df.empty:
-        return pd.DataFrame()
+    # Standardize datetime column
+    if 'Datetime' not in df.columns:
+        if isinstance(df.index, pd.DatetimeIndex):
+            df['Datetime'] = df.index
+        elif 'date' in df.columns:
+            df.rename(columns={'date': 'Datetime'}, inplace=True)
 
-    # === Calculate Indicators ===
+    # Required columns check
+    required_cols = ['Datetime', 'open', 'high', 'low', 'close', 'volume']
+    for col in required_cols:
+        if col not in df.columns:
+            raise KeyError(f"Missing required column: {col}")
+
+    # Example Strategy Logic (Placeholder)
     df['ema_9'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
-    df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
-    df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
-    df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
-    df['rsi'] = compute_rsi(df['close'])
-
-    # === Core Strategy Logic ===
-    df['long_signal'] = (
-        (df['ema_9'] > df['ema_21']) &
-        (df['close'] > df['vwap']) &
-        (df['rsi'] > 50)
-    )
-
-    df['short_signal'] = (
-        (df['ema_9'] < df['ema_21']) &
-        (df['close'] < df['vwap']) &
-        (df['rsi'] < 50)
-    )
-
-    df['signal'] = None
-    df.loc[df['long_signal'], 'signal'] = 'buy'
-    df.loc[df['short_signal'], 'signal'] = 'sell'
+    df['signal'] = df.apply(lambda row: 'buy' if row['ema_9'] > row['ema_21'] else 'sell', axis=1)
 
     return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
-
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))

@@ -1,69 +1,116 @@
-
+import os
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
-from ib_insync import *
+from ib_insync import IB, Stock, Forex, Future, Contract, util
+from datetime import datetime, timedelta
 
-# Connect to IBKR
+# Environment variables
+USE_BINANCE = os.getenv("USE_BINANCE", "false").lower() == "true"
+IBKR_ENABLED = os.getenv("USE_IBKR", "true").lower() == "true"
+
+# IBKR connection
 ib = IB()
-try:
-    ib.connect('127.0.0.1', 7497, clientId=2)
-    print("✅ Live connection to IBKR established for data fetch")
-except Exception as e:
-    print(f"⚠️ Failed to connect to IBKR for data: {e}")
+def connect_ibkr():
+    if not ib.isConnected():
+        ib.connect("127.0.0.1", 7497, clientId=1)
+        print("✅ Live connection to IBKR established for data fetch")
 
-# Known conIds if needed (you can expand this)
-futures_conids = {
-    'MGC': 559041217,
-}
+def disconnect_ibkr():
+    if ib.isConnected():
+        ib.disconnect()
 
-def get_nearest_futures_expiry():
-    today = datetime.today()
-    year = today.year
-    month = today.month
-    codes = [(3, 'H'), (6, 'M'), (9, 'U'), (12, 'Z')]
-    for m, code in codes:
-        if month <= m:
-            return f"{year}{str(m).zfill(2)}"
-    return f"{year+1}03"
-
-def fetch_ibkr_data(symbol, interval='1h', lookback=100):
-    expiry = get_nearest_futures_expiry()
-    print(f"[IBKR] Fetching live data for {symbol} | Expiry: {expiry}")
+# === Resolve Smart Futures Contract ===
+def resolve_futures_contract(symbol):
+    print(f"📊 Resolving active future contract for {symbol}...")
+    
     try:
-        if symbol in futures_conids and futures_conids[symbol]:
-            contract = Future(conId=futures_conids[symbol], exchange='GLOBEX')
-        else:
-            contract = Future(symbol=symbol, lastTradeDateOrContractMonth=expiry, exchange='GLOBEX', currency='USD')
-        ib.qualifyContracts(contract)
-        bars = ib.reqHistoricalData(
-            contract,
-            endDateTime='',
-            durationStr='2 D',
-            barSizeSetting='1 hour',
-            whatToShow='TRADES',
-            useRTH=False,
-            formatDate=1
-        )
-        df = util.df(bars)
-        df.reset_index(inplace=True)
-        df.rename(columns={'date': 'Datetime'}, inplace=True)
-        return df.tail(lookback)
+        contracts = ib.reqContractDetails(Future(symbol=symbol, exchange="GLOBEX", currency="USD"))
+        if not contracts:
+            contracts = ib.reqContractDetails(Future(symbol=symbol, exchange="NYMEX", currency="USD"))
     except Exception as e:
-        print(f"❌ IBKR fetch failed: {e}")
-        return pd.DataFrame()
+        print(f"❌ Contract request failed: {e}")
+        return None
 
-def fetch_yahoo_data(symbol, interval='1h', lookback=100):
+    valid_contracts = []
+    for detail in contracts:
+        expiry = detail.contract.lastTradeDateOrContractMonth
+        try:
+            expiry_dt = datetime.strptime(expiry, "%Y%m")
+            if expiry_dt > datetime.utcnow():
+                valid_contracts.append((expiry_dt, detail.contract))
+        except:
+            continue
+
+    if not valid_contracts:
+        print(f"❌ No non-expired contracts found for {symbol}")
+        return None
+
+    valid_contracts.sort(key=lambda x: x[0])
+    selected = valid_contracts[0][1]
+    print(f"✅ Using contract {selected.localSymbol} | Expiry: {selected.lastTradeDateOrContractMonth} | ConId: {selected.conId}")
+    return selected
+
+# === IBKR Historical Data ===
+def fetch_ibkr_data(symbol, interval="1 hour", lookback=100, asset_type="futures"):
+    connect_ibkr()
+
+    if asset_type == "futures":
+        contract = resolve_futures_contract(symbol)
+    elif asset_type == "forex":
+        contract = Forex(symbol)
+    elif asset_type == "stock":
+        contract = Stock(symbol, "SMART", "USD")
+    else:
+        print(f"⚠️ Unknown asset type: {asset_type}")
+        return None
+
+    if not contract:
+        print(f"❌ Could not resolve {asset_type} contract for {symbol}")
+        return None
+
+    bars = ib.reqHistoricalData(
+        contract,
+        endDateTime="",
+        durationStr="2 D",
+        barSizeSetting=interval,
+        whatToShow="TRADES",
+        useRTH=False,
+        formatDate=1
+    )
+
+    if not bars:
+        print(f"❌ IBKR fetch failed: No data returned for {symbol}")
+        return None
+
+    df = util.df(bars)
+    df.set_index("date", inplace=True)
+    df.index.name = "Datetime"
+    return df
+
+# === Yahoo Backup ===
+def fetch_yahoo_data(symbol, interval="5m", lookback=30):
+    print(f"📉 Fetching Yahoo data for {symbol} as fallback...")
     try:
-        period = '30d' if interval == '5m' else '90d'
-        df = yf.download(symbol, period=period, interval=interval)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[0].lower() for col in df.columns]
-        else:
-            df.columns = [col.lower() for col in df.columns]
-        df.reset_index(inplace=True)
-        df.rename(columns={'date': 'Datetime'}, inplace=True)
-        return df.tail(lookback)
+        df = yf.download(symbol, period=f"{lookback}d", interval=interval)
+        df.dropna(inplace=True)
+        df.index.name = "Datetime"
+        return df
     except Exception as e:
-        print(f"[Yahoo] Failed to fetch {symbol}: {e}")
-        return pd.DataFrame()
+        print(f"❌ Yahoo fallback failed: {e}")
+        return None
+
+# === Combined Fetch Logic ===
+def fetch_data_by_asset_type(symbol, asset_type):
+    if IBKR_ENABLED:
+        df = fetch_ibkr_data(symbol, asset_type=asset_type)
+        if df is not None:
+            return df
+
+    if asset_type == "crypto":
+        return fetch_yahoo_data(symbol, interval="15m", lookback=10)
+    elif asset_type == "forex":
+        return fetch_yahoo_data(symbol + "=X", interval="1h", lookback=30)
+    else:
+        return fetch_yahoo_data(symbol, interval="5m", lookback=30)
+
+# === Binance fallback removed due to restrictions ===

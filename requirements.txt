@@ -4,3 +4,5 @@ python-binance
 requests
 matplotlib
 ib_insync
+python-dotenv
+
