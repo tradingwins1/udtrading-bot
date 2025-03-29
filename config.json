@@ -1,7 +1,7 @@
 {
   "finnhub_api_key": "cvho01pr01qgkck54di0cvho01pr01qgkck54dig",
-  "symbol": "TSLA",
-  "timeframe": "5",
+  "symbol": "MNQ",
+  "timeframe": "15",
   "filters": {
     "wick_body_ratio_threshold": 2.5,
     "volume_spike_multiplier": 1.5
