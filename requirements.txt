@@ -5,4 +5,5 @@ requests
 matplotlib
 ib_insync
 python-dotenv
+schedule
 
