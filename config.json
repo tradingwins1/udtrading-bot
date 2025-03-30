@@ -55,6 +55,7 @@
   "time_filters": {
     "stocks": ["09:30", "11:30"],
     "futures": ["09:30", "11:30"],
+    "forex": ["03:00", "16:00"],  
     "crypto": ["00:00", "23:59"]
   },
   "discord_webhooks": {
