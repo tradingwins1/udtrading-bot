@@ -1,8 +1,6 @@
-modules = ["python-3.12"]
-run = "python data_feed.py MNQ --asset_type futures"
+run = "python3 ai_scheduler.py"
+language = "python3"
+entrypoint = "ai_scheduler.py"
 
-[nix]
-channel = "stable-24_05"
-
-[deployment]
-run = ["sh", "-c", "python data_feed.py MNQ --asset_type futures"]
+[env]
+PYTHONUNBUFFERED = "1"
