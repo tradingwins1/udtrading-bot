@@ -1,12 +1,13 @@
 
 from ib_insync import *
-
+import random
 ib = IB()
 
 def connect_ibkr():
     if not ib.isConnected():
-        ib.connect('127.0.0.1', 7497, clientId=1)
-        print("✅ Connected to IBKR TWS")
+        client_id = random.randint(1000, 9999)  # Ensures it's unique every run
+        ib.connect('127.0.0.1', 7497, clientId=client_id)
+    print("✅ Connected to IBKR TWS")
 
 def disconnect_ibkr():
     if ib.isConnected():

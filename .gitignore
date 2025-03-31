@@ -2,9 +2,10 @@
 __pycache__/
 *.py[cod]
 *.sqlite3
-.env
+.env.template
 .DS_Store
 *.zip
+.env
 
 # Logs
 logs/

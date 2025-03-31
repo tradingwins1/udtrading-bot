@@ -1,58 +1,67 @@
-
+import os
 import argparse
-from utils import fetch_ibkr_data, fetch_yahoo_data
+import pandas as pd
+from dotenv import load_dotenv
+from utils import fetch_data_by_asset_type
 from smc_strategy import smc_strategy
 from execution import execute_trades
 
-# === Asset Type Detection & Symbol Normalization ===
-def detect_asset_type(symbol):
-    if symbol.upper() in ['MNQ', 'MES', 'MGC', 'MCL', 'PL']:
-        return 'futures'
-    elif symbol.upper() in ['USDJPY', 'EURUSD', 'GBPUSD']:
-        return 'forex'
-    elif symbol.upper().endswith('-USD') or symbol.upper().endswith('USD'):
-        return 'crypto'
-    else:
-        return 'stock'
+load_dotenv()
 
-def normalize_symbol(symbol, asset_type):
-    if asset_type == 'forex' and not symbol.endswith('=X'):
-        return symbol + '=X'
-    return symbol
+def normalize_dataframe(df):
+    df.columns = [c.lower() for c in df.columns]  # Normalize all columns to lowercase
 
-def fetch_data(symbol, asset_type):
-    if asset_type == 'futures':
-        return fetch_ibkr_data(symbol, interval='1h', lookback=100)
-    elif asset_type == 'forex':
-        return fetch_yahoo_data(symbol, interval='4h', lookback=100)
-    elif asset_type == 'crypto':
-        return fetch_yahoo_data(symbol, interval='1h', lookback=100)
-    elif asset_type == 'stock':
-        return fetch_yahoo_data(symbol, interval='5m', lookback=100)
-    else:
-        print("⚠️ Unknown asset type. Using 1h Yahoo fallback.")
-        return fetch_yahoo_data(symbol, interval='1h', lookback=100)
+    if 'date' in df.columns:
+        df.rename(columns={'date': 'datetime'}, inplace=True)
+    elif 'index' in df.columns:
+        df.rename(columns={'index': 'datetime'}, inplace=True)
 
-# === Main CLI Entry ===
-def main():
-    parser = argparse.ArgumentParser(description="Run trading strategy dynamically")
-    parser.add_argument("symbol", type=str, help="Symbol to trade (e.g., MNQ, AAPL, ETH-USD)")
-    parser.add_argument("--asset_type", type=str, choices=["futures", "forex", "crypto", "stock"],
-                        help="Optional: Specify asset type. If omitted, auto-detected.")
-    args = parser.parse_args()
+    if 'datetime' not in df.columns:
+        df['datetime'] = pd.date_range(end=datetime.now(), periods=len(df), freq='1h')
 
-    raw_symbol = args.symbol.upper()
-    asset_type = args.asset_type if args.asset_type else detect_asset_type(raw_symbol)
-    symbol = normalize_symbol(raw_symbol, asset_type)
+    df.rename(columns={'datetime': 'Datetime'}, inplace=True)
 
+    # Ensure all required price columns exist
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    return df[['Datetime', 'open', 'high', 'low', 'close', 'volume']]
+
+
+def run_single_asset(symbol, asset_type):
     print(f"📊 Fetching data for {symbol} ({asset_type})...")
-    df = fetch_data(symbol, asset_type)
-
+    df = fetch_data_by_asset_type(symbol, asset_type)
+    if df is None or df.empty:
+        print(f"⚠️ No data fetched for {symbol}")
+        return
+    df = normalize_dataframe(df)
     print("🔍 Running strategy...")
     signals_df = smc_strategy(df)
-
     print("🚀 Executing trade...")
-    execute_trades(signals_df, symbol, asset_type=asset_type)
+    execute_trades(signals_df, symbol, asset_type)
+
+def run_default_assets():
+    assets = [
+        {'symbol': 'MNQ', 'type': 'futures'},
+        {'symbol': 'MGC', 'type': 'futures'},
+        {'symbol': 'AAPL', 'type': 'stock'},
+        {'symbol': 'EURUSD', 'type': 'forex'},
+        {'symbol': 'USDJPY', 'type': 'forex'}
+    ]
+    for asset in assets:
+        run_single_asset(asset['symbol'], asset['type'])
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("symbol", nargs="?", help="Symbol to run")
+    parser.add_argument("--asset_type", help="Type: stock, futures, forex")
+    args = parser.parse_args()
+
+    if args.symbol and args.asset_type:
+        run_single_asset(args.symbol, args.asset_type)
+    else:
+        run_default_assets()
 
 if __name__ == "__main__":
     main()
