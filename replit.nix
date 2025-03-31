@@ -4,8 +4,3 @@
     pkgs.glibcLocales
   ];
 }
-
-
-
-
-
