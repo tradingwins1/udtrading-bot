@@ -28,11 +28,19 @@ def reset_trade_counter():
 # Filtered scalping window: 8:30 AM - 10:30 AM CST
 def is_scalping_window():
     now = datetime.now(pytz.timezone("US/Central"))
+    if now.hour == 8 and now.minute < 30:
+        print("⏳ Scalping automation only starts at 8:30 AM CST")
+    elif now.hour == 10 and now.minute > 30:
+        print("⏳ Scalping automation ends after 10:30 AM CST")
     return now.hour == 8 and now.minute >= 30 or (9 <= now.hour < 10) or (now.hour == 10 and now.minute <= 30)
 
 # Filtered swing trading window (Forex): 7:00 AM - 11:00 AM CST
 def is_swing_window():
     now = datetime.now(pytz.timezone("US/Central"))
+    if now.hour < 7:
+        print("⏳ Swing scanning only starts at 7:00 AM CST")
+    elif now.hour > 11:
+        print("⏳ Swing scanning ends after 11:00 AM CST")
     return 7 <= now.hour <= 11
 
 # Main scalping job
@@ -83,7 +91,7 @@ def run_swing():
         trade_counter["swing"] += 1
 
 # Scheduler Loop
-schedule.every(1).minutes.do(run_scalping)
+schedule.every(5).minutes.do(run_scalping)
 schedule.every(1).hours.do(run_swing)
 
 print("📅 AI Scheduler running...")
