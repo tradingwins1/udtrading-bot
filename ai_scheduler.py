@@ -30,18 +30,25 @@ def is_scalping_window():
     now = datetime.now(pytz.timezone("US/Central"))
     if now.hour == 8 and now.minute < 30:
         print("⏳ Scalping automation only starts at 8:30 AM CST")
+        return False
     elif now.hour == 10 and now.minute > 30:
         print("⏳ Scalping automation ends after 10:30 AM CST")
-    return now.hour == 8 and now.minute >= 30 or (9 <= now.hour < 10) or (now.hour == 10 and now.minute <= 30)
+        return False
+    elif now.hour < 8 or now.hour > 10:
+        print("⏳ Scalping window is from 8:30 AM to 10:30 AM CST only")
+        return False
+    return True
 
 # Filtered swing trading window (Forex): 7:00 AM - 11:00 AM CST
 def is_swing_window():
     now = datetime.now(pytz.timezone("US/Central"))
     if now.hour < 7:
         print("⏳ Swing scanning only starts at 7:00 AM CST")
+        return False
     elif now.hour > 11:
         print("⏳ Swing scanning ends after 11:00 AM CST")
-    return 7 <= now.hour <= 11
+        return False
+    return True
 
 # Main scalping job
 scalping_assets = [
