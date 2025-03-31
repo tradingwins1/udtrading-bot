@@ -1,21 +1,36 @@
-import requests
+# Updated discord_alert.py with support for both Scalping and Swing Alerts
+
 import os
+import requests
+from datetime import datetime
 
-def send_alert(message, side, entry, sl, tp):
+def send_alert(symbol, side, entry, sl, tp, timeframe, confidence=8, alert_type="scalp"):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if alert_type == "swing":
+        webhook_url = os.getenv("DISCORD_WEBHOOK_SWING")
+        title = f"📈 Swing Trade Alert [{side.upper()}]"
+    else:
+        webhook_url = os.getenv("DISCORD_WEBHOOK_SCALPING")
+        title = f"⚡ Scalping Alert [{side.upper()}]"
+
+    if not webhook_url:
+        print("❌ Failed to send Discord alert: Discord webhook not set in environment variables.")
+        return
+
+    content = f"**{title}**\n\n"
+    content += f"**Asset:** `{symbol}`\n"
+    content += f"**Direction:** `{side.upper()}`\n"
+    content += f"**Entry:** `{entry}` | **SL:** `{sl}` | **TP:** `{tp}`\n"
+    content += f"**Timeframe:** `{timeframe}`\n"
+    content += f"**Confidence:** `{confidence}/10`\n"
+    content += f"**Triggered:** `{now}`"
+
     try:
-        webhook_url = os.getenv("DISCORD_WEBHOOK_SCALP")
-        if not webhook_url:
-            raise ValueError("Discord webhook not set in environment variables.")
-
-        payload = {
-            "content": f"**{side.upper()} ALERT**\n"
-                       f"{message}\n"
-                       f"Entry: `{entry}` | SL: `{sl}` | TP: `{tp}`"
-        }
-
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status()
-        print(f"📣 Discord alert sent! ({response.status_code})")
-
+        response = requests.post(webhook_url, json={"content": content})
+        if response.status_code == 204:
+            print(f"📣 Discord alert sent! ({alert_type.upper()}) ✅")
+        else:
+            print(f"❌ Discord alert failed! Status: {response.status_code}, Body: {response.text}")
     except Exception as e:
-        print(f"❌ Failed to send Discord alert: {e}")
+        print(f"❌ Exception while sending Discord alert: {e}")

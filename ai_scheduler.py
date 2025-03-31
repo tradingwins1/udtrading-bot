@@ -1,40 +1,75 @@
-# ✅ Auto Scheduler + Trade Tracker (Step 2 of Final Bot Setup)
-# This script will run every N minutes (or at custom times)
-# It will: fetch data, run strategy, place trades, and log outcomes.
-
-import os
-import time
+# ai_scheduler.py
 import schedule
+import time
 from datetime import datetime
-from dotenv import load_dotenv
 from data_feed import run_single_asset
+from discord_alert import send_alert
+from red_news_filter import is_red_folder_event_today
 
-load_dotenv()
+# Configurable settings
+ALLOWED_SCALPING_WINDOW = ("08:30", "10:30")  # CST
+MAX_SCALPS_PER_DAY = 2
+scalp_counter = 0
 
-# Define your scheduled asset runs here
-def run_forex_swing():
-    print("\n🕙 Running scheduled swing check for USDJPY")
-    run_single_asset("USDJPY", "forex")
+# Assets to trade
+scalping_assets = [
+    {"symbol": "TSLA", "type": "stock"},
+    {"symbol": "AAPL", "type": "stock"},
+    {"symbol": "NVDA", "type": "stock"},
+    {"symbol": "AMD", "type": "stock"},
+    {"symbol": "ETHUSD", "type": "crypto"},
+]
+swing_assets = [
+    {"symbol": "USDJPY", "type": "forex"},
+    {"symbol": "EURUSD", "type": "forex"},
+    {"symbol": "XAUUSD", "type": "forex"},
+]
 
-def run_stock_scalping():
-    print("\n⚡ Running scheduled scalping check for TSLA")
-    run_single_asset("TSLA", "stock")
+def is_time_in_range(start, end):
+    now = datetime.now().strftime("%H:%M")
+    return start <= now <= end
 
-# Add schedules here (can be expanded based on strategy)
-schedule.every(1).hours.do(run_forex_swing)
-schedule.every(15).minutes.do(run_stock_scalping)
+def run_scalping():
+    global scalp_counter
+    if scalp_counter >= MAX_SCALPS_PER_DAY:
+        print("✅ Daily scalp limit reached.")
+        return
 
-print("✅ AI Scheduler started at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    if not is_time_in_range(*ALLOWED_SCALPING_WINDOW):
+        print("⏱️ Not within scalping hours.")
+        return
 
-while True:
-    try:
+    if is_red_folder_event_today():
+        print("🚫 High-impact news day. Scalping disabled.")
+        send_alert("🚨 Scalping skipped due to red-folder news.")
+        return
+
+    for asset in scalping_assets:
+        if scalp_counter >= MAX_SCALPS_PER_DAY:
+            break
+        run_single_asset(asset["symbol"], asset["type"])
+        scalp_counter += 1
+
+
+def run_swing():
+    if is_red_folder_event_today():
+        print("🚫 High-impact news day. Swing trade skipped.")
+        send_alert("🚨 Swing trade skipped due to red-folder news.")
+        return
+
+    for asset in swing_assets:
+        run_single_asset(asset["symbol"], asset["type"])
+
+# Daily schedule (CST logic assumed to be local timezone)
+schedule.every().day.at("08:30").do(run_scalping)
+schedule.every().day.at("14:00").do(run_swing)  # Midday 2 PM for swing
+
+def stop_scheduler():
+    print("🛑 Scheduler stopped.")
+    exit()
+
+if __name__ == "__main__":
+    print("📅 AI Scheduler running...")
+    while True:
         schedule.run_pending()
-        time.sleep(1)
-    except Exception as e:
-        print(f"❌ Scheduler encountered error: {e}")
-        # Optional: Alert to Discord if webhook available
-        webhook_url = os.getenv("DISCORD_WEBHOOK_SCALPING")
-        if webhook_url:
-            import requests
-            requests.post(webhook_url, json={"content": f"❌ Scheduler error at {datetime.now()} — {e}"})
-        time.sleep(60)  # Wait before retrying
+        time.sleep(30)
