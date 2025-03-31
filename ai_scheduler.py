@@ -3,73 +3,90 @@ import schedule
 import time
 from datetime import datetime
 from data_feed import run_single_asset
-from discord_alert import send_alert
 from red_news_filter import is_red_folder_event_today
+import pytz
+import os
+from dotenv import load_dotenv
 
-# Configurable settings
-ALLOWED_SCALPING_WINDOW = ("08:30", "10:30")  # CST
-MAX_SCALPS_PER_DAY = 2
-scalp_counter = 0
+load_dotenv()
 
-# Assets to trade
+# Track trades per day
+trade_counter = {
+    "scalp": 0,
+    "swing": 0,
+    "last_date": datetime.now().date()
+}
+
+# Reset daily counter at midnight
+def reset_trade_counter():
+    today = datetime.now().date()
+    if trade_counter["last_date"] != today:
+        trade_counter["scalp"] = 0
+        trade_counter["swing"] = 0
+        trade_counter["last_date"] = today
+
+# Filtered scalping window: 8:30 AM - 10:30 AM CST
+def is_scalping_window():
+    now = datetime.now(pytz.timezone("US/Central"))
+    return now.hour == 8 and now.minute >= 30 or (9 <= now.hour < 10) or (now.hour == 10 and now.minute <= 30)
+
+# Filtered swing trading window (Forex): 7:00 AM - 11:00 AM CST
+def is_swing_window():
+    now = datetime.now(pytz.timezone("US/Central"))
+    return 7 <= now.hour <= 11
+
+# Main scalping job
 scalping_assets = [
-    {"symbol": "TSLA", "type": "stock"},
-    {"symbol": "AAPL", "type": "stock"},
-    {"symbol": "NVDA", "type": "stock"},
-    {"symbol": "AMD", "type": "stock"},
-    {"symbol": "ETHUSD", "type": "crypto"},
+    ("TSLA", "stock"),
+    ("AAPL", "stock"),
+    ("NVDA", "stock"),
+    ("AMD", "stock")
 ]
-swing_assets = [
-    {"symbol": "USDJPY", "type": "forex"},
-    {"symbol": "EURUSD", "type": "forex"},
-    {"symbol": "XAUUSD", "type": "forex"},
-]
-
-def is_time_in_range(start, end):
-    now = datetime.now().strftime("%H:%M")
-    return start <= now <= end
 
 def run_scalping():
-    global scalp_counter
-    if scalp_counter >= MAX_SCALPS_PER_DAY:
-        print("✅ Daily scalp limit reached.")
+    print("🔍 Running scalping automation")
+    reset_trade_counter()
+    if not is_scalping_window():
+        print("⏰ Outside scalping hours")
         return
-
-    if not is_time_in_range(*ALLOWED_SCALPING_WINDOW):
-        print("⏱️ Not within scalping hours.")
-        return
-
     if is_red_folder_event_today():
-        print("🚫 High-impact news day. Scalping disabled.")
-        send_alert("🚨 Scalping skipped due to red-folder news.")
+        print("🚫 Red folder news detected, skipping scalping today")
         return
+    for symbol, asset_type in scalping_assets:
+        if trade_counter["scalp"] >= 2:
+            print("✅ Max scalps reached for today")
+            return
+        run_single_asset(symbol, asset_type)
+        trade_counter["scalp"] += 1
 
-    for asset in scalping_assets:
-        if scalp_counter >= MAX_SCALPS_PER_DAY:
-            break
-        run_single_asset(asset["symbol"], asset["type"])
-        scalp_counter += 1
-
+# Swing trading job
+swing_assets = [
+    ("USDJPY", "forex"),
+    ("EURUSD", "forex"),
+    ("XAUUSD", "forex")
+]
 
 def run_swing():
-    if is_red_folder_event_today():
-        print("🚫 High-impact news day. Swing trade skipped.")
-        send_alert("🚨 Swing trade skipped due to red-folder news.")
+    print("🔍 Running swing setup")
+    reset_trade_counter()
+    if not is_swing_window():
+        print("⏰ Outside swing hours")
         return
+    if is_red_folder_event_today():
+        print("🚫 Red folder news detected, skipping swing today")
+        return
+    for symbol, asset_type in swing_assets:
+        if trade_counter["swing"] >= 2:
+            print("✅ Swing trade already executed today")
+            return
+        run_single_asset(symbol, asset_type)
+        trade_counter["swing"] += 1
 
-    for asset in swing_assets:
-        run_single_asset(asset["symbol"], asset["type"])
+# Scheduler Loop
+schedule.every(1).minutes.do(run_scalping)
+schedule.every(1).hours.do(run_swing)
 
-# Daily schedule (CST logic assumed to be local timezone)
-schedule.every().day.at("08:30").do(run_scalping)
-schedule.every().day.at("14:00").do(run_swing)  # Midday 2 PM for swing
-
-def stop_scheduler():
-    print("🛑 Scheduler stopped.")
-    exit()
-
-if __name__ == "__main__":
-    print("📅 AI Scheduler running...")
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+print("📅 AI Scheduler running...")
+while True:
+    schedule.run_pending()
+    time.sleep(1)

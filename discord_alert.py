@@ -1,10 +1,12 @@
-# Updated discord_alert.py with support for both Scalping and Swing Alerts
-
+# discord_alert.py
 import os
 import requests
 from datetime import datetime
+from dotenv import load_dotenv
 
-def send_alert(symbol, side, entry, sl, tp, timeframe, confidence=8, alert_type="scalp"):
+load_dotenv()
+
+def send_alert(symbol, side, entry, sl, tp, timeframe, confidence=8, alert_type="scalp", reason=""):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if alert_type == "swing":
@@ -24,6 +26,8 @@ def send_alert(symbol, side, entry, sl, tp, timeframe, confidence=8, alert_type=
     content += f"**Entry:** `{entry}` | **SL:** `{sl}` | **TP:** `{tp}`\n"
     content += f"**Timeframe:** `{timeframe}`\n"
     content += f"**Confidence:** `{confidence}/10`\n"
+    if reason:
+        content += f"**Reason:** {reason}\n"
     content += f"**Triggered:** `{now}`"
 
     try:
