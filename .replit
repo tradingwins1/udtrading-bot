@@ -1,0 +1,6 @@
+run = "python3 ai_scheduler.py"
+language = "python3"
+entrypoint = "ai_scheduler.py"
+
+[env]
+PYTHONUNBUFFERED = "1"
