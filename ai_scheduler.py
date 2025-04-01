@@ -10,6 +10,9 @@ import pytz
 import os
 from dotenv import load_dotenv
 
+from db import init_db   # ✅ Add this line
+init_db()                # ✅ Run it once at startup
+
 load_dotenv()
 
 # Track trades per day
