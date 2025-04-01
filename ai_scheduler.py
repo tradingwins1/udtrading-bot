@@ -4,15 +4,14 @@ import time
 from datetime import datetime
 from data_feed import run_single_asset
 from red_news_filter import is_red_folder_event_today
-from tracker import check_trade_exit  # ✅ NEW
-from price_feed import get_latest_price  # ✅ Assumes you have this module
+from tracker import check_trade_exit
+from price_feed import get_latest_price
 import pytz
 import os
 from dotenv import load_dotenv
+from db import init_db
 
-from db import init_db   # ✅ Add this line
-init_db()                # ✅ Run it once at startup
-
+init_db()
 load_dotenv()
 
 # Track trades per day
@@ -52,15 +51,27 @@ def is_swing_window():
         return False
     return True
 
-# ✅ New: Monitor SL/TP for tracked assets
+# ✅ Symbol mapping for Yahoo Finance
+def map_symbol(symbol):
+    symbol_map = {
+        "USDJPY": "JPY=X",
+        "EURUSD": "EURUSD=X",
+        "XAUUSD": "XAUUSD=X"
+    }
+    return symbol_map.get(symbol.upper(), symbol)
+
+# ✅ Monitor SL/TP status
 def track_open_trades():
     all_assets = ["TSLA", "AAPL", "NVDA", "AMD", "USDJPY", "EURUSD", "XAUUSD"]
     for asset in all_assets:
-        latest_price = get_latest_price(asset)
+        mapped_symbol = map_symbol(asset)
+        latest_price = get_latest_price(mapped_symbol)
         if latest_price:
             check_trade_exit(asset, latest_price)
+        else:
+            print(f"⚠️ Could not fetch price for {asset}")
 
-# Main scalping job
+# Scalping assets
 scalping_assets = [
     ("TSLA", "stock"),
     ("AAPL", "stock"),
@@ -83,9 +94,9 @@ def run_scalping():
             return
         run_single_asset(symbol, asset_type)
         trade_counter["scalp"] += 1
-    track_open_trades()  # ✅ Monitor SL/TP
+    track_open_trades()
 
-# Swing trading job
+# Swing assets
 swing_assets = [
     ("USDJPY", "forex"),
     ("EURUSD", "forex"),
@@ -107,9 +118,9 @@ def run_swing():
             return
         run_single_asset(symbol, asset_type)
         trade_counter["swing"] += 1
-    track_open_trades()  # ✅ Monitor SL/TP
+    track_open_trades()
 
-# Scheduler Loop
+# Main scheduler loop
 schedule.every(5).minutes.do(run_scalping)
 schedule.every(1).hours.do(run_swing)
 
