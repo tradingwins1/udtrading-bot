@@ -20,3 +20,12 @@ def get_stats():
     }).rename(columns={'result': 'win_rate_%', 'rr_ratio': 'avg_rr'}).reset_index()
 
     return stats
+if __name__ == "__main__":
+    stats = get_stats()
+    if stats is not None:
+        print(stats)
+    else:
+        print("No trade data found.")
+
+
+

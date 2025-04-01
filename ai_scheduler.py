@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from data_feed import run_single_asset
 from red_news_filter import is_red_folder_event_today
+from tracker import check_trade_exit  # ✅ NEW
+from price_feed import get_latest_price  # ✅ Assumes you have this module
 import pytz
 import os
 from dotenv import load_dotenv
@@ -17,7 +19,6 @@ trade_counter = {
     "last_date": datetime.now().date()
 }
 
-# Reset daily counter at midnight
 def reset_trade_counter():
     today = datetime.now().date()
     if trade_counter["last_date"] != today:
@@ -25,7 +26,6 @@ def reset_trade_counter():
         trade_counter["swing"] = 0
         trade_counter["last_date"] = today
 
-# Filtered scalping window: 8:30 AM - 10:30 AM CST
 def is_scalping_window():
     now = datetime.now(pytz.timezone("US/Central"))
     if now.hour == 8 and now.minute < 30:
@@ -39,7 +39,6 @@ def is_scalping_window():
         return False
     return True
 
-# Filtered swing trading window (Forex): 7:00 AM - 11:00 AM CST
 def is_swing_window():
     now = datetime.now(pytz.timezone("US/Central"))
     if now.hour < 7:
@@ -49,6 +48,14 @@ def is_swing_window():
         print("⏳ Swing scanning ends after 11:00 AM CST")
         return False
     return True
+
+# ✅ New: Monitor SL/TP for tracked assets
+def track_open_trades():
+    all_assets = ["TSLA", "AAPL", "NVDA", "AMD", "USDJPY", "EURUSD", "XAUUSD"]
+    for asset in all_assets:
+        latest_price = get_latest_price(asset)
+        if latest_price:
+            check_trade_exit(asset, latest_price)
 
 # Main scalping job
 scalping_assets = [
@@ -73,6 +80,7 @@ def run_scalping():
             return
         run_single_asset(symbol, asset_type)
         trade_counter["scalp"] += 1
+    track_open_trades()  # ✅ Monitor SL/TP
 
 # Swing trading job
 swing_assets = [
@@ -96,6 +104,7 @@ def run_swing():
             return
         run_single_asset(symbol, asset_type)
         trade_counter["swing"] += 1
+    track_open_trades()  # ✅ Monitor SL/TP
 
 # Scheduler Loop
 schedule.every(5).minutes.do(run_scalping)
