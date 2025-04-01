@@ -1,5 +1,5 @@
 # smc_strategy.py
-
+from db import log_trade
 import pandas as pd
 
 def smc_strategy(df):
