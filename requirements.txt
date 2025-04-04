@@ -1,0 +1,9 @@
+pandas
+yfinance
+python-binance
+requests
+matplotlib
+ib_insync
+pytz
+python-dotenv
+schedule

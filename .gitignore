@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env.template
+.DS_Store
+*.zip
+.env
+
+# Logs
+logs/
+*.log
+
+# VSCode
+.vscode/
