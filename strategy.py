@@ -103,6 +103,12 @@ def run_strategy(market_data):
         sl = market_data['pmh'] + 5
         tp = market_data['pml'] - 15
 
+    # === SleepMode: Overnight Trade Adjustments ===
+    if market_data.get('sleep_mode'):
+        partial_profit = (tp - market_data['entry']) * 0.5
+        sl = market_data['pml'] - 2  # Tighter stop overnight
+        tp = market_data['entry'] + partial_profit
+
     return {
         'action': 'buy' if market_data['bias'] == 'bullish' else 'sell',
         'confidence': score,
@@ -123,23 +129,26 @@ def run_single_asset(df, symbol):
         'low': last['low'],
         'volume_spike': detect_volume_spike(df, len(df)-1),
         'rule_84': rule_of_84_entry(prev, last),
-        'reclaim_zone': reclaim_zone_confirmed(last, zone=last['low']),  # Replace with actual zone
+        'reclaim_zone': reclaim_zone_confirmed(last, zone=last['low']),
         'opening_range': opening_range_breakout_retest(
             range_high=last['high'] - 20,
             range_low=last['low'] + 20,
             current_candle=last
         ),
-        'htf_zone': True,  # Or dynamic check
-        'bias': 'bullish',  # Or dynamic bias logic
+        'htf_zone': True,
+        'bias': 'bullish',
         'entry': last['close'],
         'sl': last['low'] - 25,
         'tp': last['close'] + 50,
         'pml': df['low'].min(),
-        'pmh': df['high'].max()
+        'pmh': df['high'].max(),
+        'sleep_mode': True  # Flag for Sleep-Friendly Logic
     }
 
     signal = run_strategy(market_data)
     if signal:
         print(f"[{symbol}] Entry confirmed →", signal)
+        with open(f"logs/{symbol}_signals.log", "a") as log:
+            log.write(f"{datetime.utcnow().isoformat()} | {symbol} | {signal}\n")
         return signal
     return None
