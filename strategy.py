@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 # === strategy.py (Enhanced with New Confluences) ===
+=======
+>>>>>>> c12cab3eb014edf455e1f1b6569173c8b901b0f3
 from datetime import datetime, timedelta
 import pytz
 
@@ -43,6 +46,7 @@ def is_valid_wick_body_candle(open_price, close_price, high_price, low_price, th
     if total_range == 0:
         return False
     return (body / total_range) >= threshold
+<<<<<<< HEAD
 
 # === PDH/PDL Trap Check ===
 def is_near_pdh_or_pdl(df, entry_price, threshold=2.0):
@@ -152,3 +156,16 @@ def run_single_asset(df, symbol):
             log.write(f"{datetime.utcnow().isoformat()} | {symbol} | {signal}\n")
         return signal
     return None
+=======
+def is_near_pdh_or_pdl(df, entry_price, threshold=2.0):
+    """
+    Returns True if entry is within `threshold` points of previous day high or low
+    """
+    if len(df) < 96:  # Not enough data to calculate PDH/PDL
+        return False
+
+    pdh = df['high'].shift(1).rolling(96).max().iloc[-1]
+    pdl = df['low'].shift(1).rolling(96).min().iloc[-1]
+
+    return abs(entry_price - pdh) < threshold or abs(entry_price - pdl) < threshold
+>>>>>>> c12cab3eb014edf455e1f1b6569173c8b901b0f3
