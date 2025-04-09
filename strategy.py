@@ -1,11 +1,11 @@
-<<<<<<< HEAD
-# === strategy.py (Enhanced with New Confluences) ===
-=======
->>>>>>> c12cab3eb014edf455e1f1b6569173c8b901b0f3
 from datetime import datetime, timedelta
 import pytz
+import asyncio
+import logging
 
-# === Red Folder News Filter ===
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 def get_mock_red_news_events():
     now = datetime.utcnow()
     return [
@@ -22,7 +22,6 @@ def is_high_impact_news_nearby(trade_time_utc, window_minutes=15):
             return True
     return False
 
-# === Wick-to-Body Ratio ===
 def wick_to_body_ratio(candle):
     high = candle['high']
     low = candle['low']
@@ -32,23 +31,19 @@ def wick_to_body_ratio(candle):
     wick = high - low
     return wick / body if body != 0 else float('inf')
 
-# === Volume Spike Filter ===
 def detect_volume_spike(df, i, multiplier=1.5):
     if i < 10:
         return False
     avg_volume = df.iloc[i-10:i]['volume'].mean()
     return df.iloc[i]['volume'] > avg_volume * multiplier
 
-# === Wick-to-Body Validation ===
 def is_valid_wick_body_candle(open_price, close_price, high_price, low_price, threshold=0.6):
     body = abs(close_price - open_price)
     total_range = high_price - low_price
     if total_range == 0:
         return False
     return (body / total_range) >= threshold
-<<<<<<< HEAD
 
-# === PDH/PDL Trap Check ===
 def is_near_pdh_or_pdl(df, entry_price, threshold=2.0):
     if len(df) < 96:
         return False
@@ -56,17 +51,14 @@ def is_near_pdh_or_pdl(df, entry_price, threshold=2.0):
     pdl = df['low'].shift(1).rolling(96).min().iloc[-1]
     return abs(entry_price - pdh) < threshold or abs(entry_price - pdl) < threshold
 
-# === Reclaim Zone Confirmation ===
 def reclaim_zone_confirmed(candle, zone):
     return candle['low'] < zone and candle['close'] > zone
 
-# === 84% Rule Check ===
 def rule_of_84_entry(breakout_candle, current_candle):
     range_size = breakout_candle['high'] - breakout_candle['low']
     pullback = breakout_candle['high'] - current_candle['low']
     return pullback >= 0.84 * range_size and current_candle['close'] > current_candle['open']
 
-# === 5-Min Range Break + Retest ===
 def opening_range_breakout_retest(range_high, range_low, current_candle):
     return (
         current_candle['low'] > range_low and
@@ -74,7 +66,6 @@ def opening_range_breakout_retest(range_high, range_low, current_candle):
         current_candle['close'] > range_high
     )
 
-# === Entry Scoring ===
 def calculate_entry_score(data):
     score = 0
     if data.get('htf_zone'): score += 2
@@ -84,9 +75,7 @@ def calculate_entry_score(data):
     if data.get('rule_84'): score += 2
     return score
 
-# === Strategy Runner Hook ===
-def run_strategy(market_data):
-    # === Confluence: Avoid near PMH/PML unless reclaimed (Scalping Focus) ===
+async def run_strategy(market_data):
     near_pmh = abs(market_data['entry'] - market_data['pmh']) < 2.0
     near_pml = abs(market_data['entry'] - market_data['pml']) < 2.0
     reclaimed = market_data.get('reclaim_zone', False)
@@ -99,7 +88,6 @@ def run_strategy(market_data):
         return None
     if not is_valid_wick_body_candle(market_data['open'], market_data['close'], market_data['high'], market_data['low']):
         return None
-    # === Dynamic SL/TP for Swing Trades ===
     if market_data['bias'] == 'bullish':
         sl = market_data['pml'] - 5
         tp = market_data['pmh'] + 15
@@ -107,10 +95,9 @@ def run_strategy(market_data):
         sl = market_data['pmh'] + 5
         tp = market_data['pml'] - 15
 
-    # === SleepMode: Overnight Trade Adjustments ===
     if market_data.get('sleep_mode'):
         partial_profit = (tp - market_data['entry']) * 0.5
-        sl = market_data['pml'] - 2  # Tighter stop overnight
+        sl = market_data['pml'] - 2
         tp = market_data['entry'] + partial_profit
 
     return {
@@ -121,8 +108,7 @@ def run_strategy(market_data):
         'tp': tp
     }
 
-# === Scheduler Integration (Example Usage with PML/PMH) ===
-def run_single_asset(df, symbol):
+async def run_single_asset(df, symbol):
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -146,26 +132,13 @@ def run_single_asset(df, symbol):
         'tp': last['close'] + 50,
         'pml': df['low'].min(),
         'pmh': df['high'].max(),
-        'sleep_mode': True  # Flag for Sleep-Friendly Logic
+        'sleep_mode': True
     }
 
-    signal = run_strategy(market_data)
+    signal = await run_strategy(market_data)
     if signal:
-        print(f"[{symbol}] Entry confirmed →", signal)
+        logger.info(f"[{symbol}] Entry confirmed → {signal}")
         with open(f"logs/{symbol}_signals.log", "a") as log:
             log.write(f"{datetime.utcnow().isoformat()} | {symbol} | {signal}\n")
         return signal
     return None
-=======
-def is_near_pdh_or_pdl(df, entry_price, threshold=2.0):
-    """
-    Returns True if entry is within `threshold` points of previous day high or low
-    """
-    if len(df) < 96:  # Not enough data to calculate PDH/PDL
-        return False
-
-    pdh = df['high'].shift(1).rolling(96).max().iloc[-1]
-    pdl = df['low'].shift(1).rolling(96).min().iloc[-1]
-
-    return abs(entry_price - pdh) < threshold or abs(entry_price - pdl) < threshold
->>>>>>> c12cab3eb014edf455e1f1b6569173c8b901b0f3

@@ -1,16 +1,7 @@
-<<<<<<< HEAD
 ib_async
 schedule
 python-dotenv
 pytz
-=======
-pandas
+sqlite3  # Included in Python stdlib, but listed for clarity
 yfinance
-python-binance
-requests
-matplotlib
-ib_insync
-pytz
-python-dotenv
-schedule
->>>>>>> c12cab3eb014edf455e1f1b6569173c8b901b0f3
+pandas
