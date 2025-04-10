@@ -2,6 +2,7 @@ from ib_async import IB, Stock, Forex, Future, MarketOrder, LimitOrder
 import asyncio
 import random
 import logging
+import os  # Add this import
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,9 +18,11 @@ class IBKRTrader:
         """Connect to IBKR Gateway with retry logic."""
         if not self.ib.isConnected():
             client_id = random.randint(1000, 9999)
+            host = os.getenv("IBKR_HOST", "127.0.0.1")
+            port = int(os.getenv("IBKR_PORT", 4002))  # Load port from .env
             for attempt in range(3):
                 try:
-                    await self.ib.connectAsync('127.0.0.1', 4004, clientId=client_id)
+                    await self.ib.connectAsync(host, port, clientId=client_id)
                     logger.info("Connected to IBKR Gateway")
                     return
                 except Exception as e:

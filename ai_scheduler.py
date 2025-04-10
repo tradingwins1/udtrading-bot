@@ -2,15 +2,15 @@ import schedule
 import asyncio
 import time
 from datetime import datetime
-from bot.ibkr_client import IBKRTrader
-from bot.red_news_filter import is_red_folder_event_today
-from bot.live_tracker import add_live_trade, track_live_trades
-from bot.price_feed import get_latest_price
-from bot.strategy import run_single_asset
+from ibkr_client import IBKRTrader
+from red_news_filter import is_red_folder_event_today
+from live_tracker import add_live_trade, track_live_trades
+from price_feed import get_latest_price
+from execution import check_entry
 import pytz
 import os
 from dotenv import load_dotenv
-from bot.db import init_db, log_trade
+from db import init_db, log_trade
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,29 +33,6 @@ def reset_trade_counter():
         trade_counter["swing"] = 0
         trade_counter["last_date"] = today
 
-def is_scalping_window():
-    now = datetime.now(pytz.timezone("US/Central"))
-    if now.hour == 8 and now.minute < 30:
-        logger.info("Scalping automation only starts at 8:30 AM CST")
-        return False
-    elif now.hour == 10 and now.minute > 30:
-        logger.info("Scalping automation ends after 10:30 AM CST")
-        return False
-    elif now.hour < 8 or now.hour > 10:
-        logger.info("Scalping window is from 8:30 AM to 10:30 AM CST only")
-        return False
-    return True
-
-def is_swing_window():
-    now = datetime.now(pytz.timezone("US/Central"))
-    if now.hour < 7:
-        logger.info("Swing scanning only starts at 7:00 AM CST")
-        return False
-    elif now.hour > 11:
-        logger.info("Swing scanning ends after 11:00 AM CST")
-        return False
-    return True
-
 def map_symbol(symbol):
     symbol_map = {
         "USDJPY": "JPY=X",
@@ -70,89 +47,95 @@ async def track_open_trades():
         mapped_symbol = map_symbol(asset)
         latest_price = get_latest_price(mapped_symbol)
         if latest_price:
-            track_live_trades()  # Updated to call the function directly
+            track_live_trades()
 
+# Define assets and timeframes for each session
 scalping_assets = [
-    ("TSLA", "stock"),
-    ("AAPL", "stock"),
-    ("NVDA", "stock"),
-    ("AMD", "stock")
+    ("TSLA", "stock", "5m"),
+    ("AAPL", "stock", "5m"),
+    ("NVDA", "stock", "5m"),
+    ("AMD", "stock", "5m"),
+    ("BTCUSD", "crypto", "5m")
 ]
-
-async def run_scalping():
-    logger.info("Running scalping automation")
-    reset_trade_counter()
-    if not is_scalping_window():
-        logger.info("Outside scalping hours")
-        return
-    if is_red_folder_event_today():
-        logger.info("Red folder news detected, skipping scalping today")
-        return
-    for symbol, asset_type in scalping_assets:
-        if trade_counter["scalp"] >= 2:
-            logger.info("Max scalps reached for today")
-            return
-        trade = await trader.place_order(symbol, asset_type, "BUY", 1)
-        if trade:
-            add_live_trade(symbol, trade.orderStatus.avgFillPrice, trade.order.stopLoss, trade.order.takeProfit, "BUY")
-            log_trade({
-                "asset": symbol,
-                "direction": "BUY",
-                "entry_price": trade.orderStatus.avgFillPrice,
-                "exit_price": None,
-                "stop_loss": trade.order.stopLoss,
-                "take_profit": trade.order.takeProfit,
-                "rr_ratio": None,
-                "result": "Pending",
-                "setup_type": "scalp",
-                "confidence_score": None,
-                "notes": ""
-            })
-            trade_counter["scalp"] += 1
-    await track_open_trades()
 
 swing_assets = [
-    ("USDJPY", "forex"),
-    ("EURUSD", "forex"),
-    ("XAUUSD", "forex")
+    ("USDJPY", "forex", "1h"),
+    ("EURUSD", "forex", "1h"),
+    ("XAUUSD", "forex", "4h"),
+    ("MNQ", "futures", "15m")
 ]
 
-async def run_swing():
-    logger.info("Running swing setup")
+async def run_session(assets, session_name):
+    logger.info(f"Running {session_name} session")
     reset_trade_counter()
-    if not is_swing_window():
-        logger.info("Outside swing hours")
-        return
     if is_red_folder_event_today():
-        logger.info("Red folder news detected, skipping swing today")
+        logger.info("Red folder news detected, skipping session")
         return
-    for symbol, asset_type in swing_assets:
-        if trade_counter["swing"] >= 2:
-            logger.info("Swing trade already executed today")
-            return
-        trade = await trader.place_order(symbol, asset_type, "BUY", 1)
-        if trade:
-            add_live_trade(symbol, trade.orderStatus.avgFillPrice, trade.order.stopLoss, trade.order.takeProfit, "BUY")
+
+    for symbol, asset_type, timeframe in assets:
+        # Skip assets not relevant to the session
+        if asset_type == "crypto" and session_name != "london_ny":
+            continue
+        if asset_type == "stock" and session_name != "ny":
+            continue
+
+        # Fetch candles (placeholder: implement in data_feed.py)
+        from bot.data_feed import fetch_candles
+        candles_df = await fetch_candles(symbol, timeframe)
+        if candles_df is None or candles_df.empty:
+            logger.info(f"No data for {symbol}")
+            continue
+
+        # Check entry
+        contract = trader.create_contract(symbol, asset_type)  # Placeholder: Implement in IBKRTrader
+        entry = await check_entry(trader, candles_df, contract)
+        if entry:
+            add_live_trade(symbol, entry['entry_price'], entry['stop_loss'], entry['take_profit'], entry['direction'])
             log_trade({
                 "asset": symbol,
-                "direction": "BUY",
-                "entry_price": trade.orderStatus.avgFillPrice,
+                "direction": entry['direction'],
+                "entry_price": entry['entry_price'],
                 "exit_price": None,
-                "stop_loss": trade.order.stopLoss,
-                "take_profit": trade.order.takeProfit,
-                "rr_ratio": None,
+                "stop_loss": entry['stop_loss'],
+                "take_profit": entry['take_profit'],
+                "rr_ratio": 2.0,
                 "result": "Pending",
-                "setup_type": "swing",
-                "confidence_score": None,
-                "notes": ""
+                "setup_type": "scalp" if asset_type in ["stock", "crypto"] else "swing",
+                "confidence_score": entry['score'],
+                "notes": f"Session: {session_name}"
             })
-            trade_counter["swing"] += 1
+            if asset_type in ["stock", "crypto"]:
+                trade_counter["scalp"] += 1
+            else:
+                trade_counter["swing"] += 1
+
     await track_open_trades()
+
+    # After session, assess performance and update strategy
+    from bot.bot_trainer import assess_trade_performance, update_strategy
+    adjustments = assess_trade_performance()
+    if adjustments:
+        update_strategy(adjustments)
+        from bot.scorer import update_weights
+        from bot.smc_strategy import update_strategy_params
+        update_weights(adjustments)
+        update_strategy_params(adjustments)
+        logger.info(f"Applied strategy adjustments: {adjustments}")
 
 async def main():
     await trader.connect()
-    schedule.every(5).minutes.do(lambda: asyncio.create_task(run_scalping()))
-    schedule.every(1).hours.do(lambda: asyncio.create_task(run_swing()))
+    # Asian Session (00:00-08:00 UTC): Forex (4H), Futures (15-min)
+    schedule.every().day.at("00:00").do(
+        lambda: asyncio.create_task(run_session(swing_assets, "asian"))
+    )
+    # London-NY Overlap (12:00-20:00 UTC): Forex (1H/4H), Futures (15-min), Crypto (5-min)
+    schedule.every().day.at("12:00").do(
+        lambda: asyncio.create_task(run_session(swing_assets + scalping_assets, "london_ny"))
+    )
+    # NY Open (13:30-20:00 UTC): Options (5-min), Futures (15-min), Crypto (5-min)
+    schedule.every().day.at("13:30").do(
+        lambda: asyncio.create_task(run_session(scalping_assets, "ny"))
+    )
     logger.info("AI Scheduler running...")
     while True:
         schedule.run_pending()

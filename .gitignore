@@ -13,3 +13,7 @@ logs/
 
 # VSCode
 .vscode/
+venv/
+tests/
+__pycache__/
+*.pyc

@@ -1,6 +1,36 @@
 from db import log_trade
 from scorer import score_setup
 import pandas as pd
+from order_block import check_order_block
+from liquidity_sweep import check_liquidity_sweep
+from rsi_divergence import check_rsi_divergence
+from bos_detector import check_bos
+from trend_detector import determine_trend
+from red_news_filter import is_red_folder_event_today
+from utils import check_3_bar_pattern, check_pop_and_fade, calculate_atr
+
+# Dynamic strategy parameters, adjustable by the learning model
+dynamic_params = {
+    "volume_threshold": 1.5,  # Default volume spike requirement
+    "avoid_low_atr": False,   # Default: Don't avoid low ATR trades
+    "tighten_entry": False    # Default: Don't tighten entry criteria
+}
+
+def update_strategy_params(adjustments):
+    """
+    Update strategy parameters based on learning model adjustments.
+    adjustments: Dict with suggested adjustments from bot_trainer.py.
+    """
+    global dynamic_params
+    if 'increase_volume_requirement' in adjustments:
+        dynamic_params['volume_threshold'] = 2.0  # Increase to 2x average
+        print(f"Updated volume threshold to {dynamic_params['volume_threshold']}")
+    if 'avoid_low_atr' in adjustments:
+        dynamic_params['avoid_low_atr'] = True
+        print("Enabled avoiding low ATR trades")
+    if 'tighten_entry' in adjustments:
+        dynamic_params['tighten_entry'] = True
+        print("Enabled tightening entry criteria")
 
 def smc_strategy(df):
     # Standardize datetime column
@@ -16,11 +46,58 @@ def smc_strategy(df):
         if col not in df.columns:
             raise KeyError(f"Missing required column: {col}")
 
-    # Strategy Logic (Placeholder - replace with real SMC logic)
-    df['ema_9'] = df['close'].ewm(span=9, adjust=False).mean()
-    df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
-    df['signal'] = df.apply(lambda row: 'buy' if row['ema_9'] > row['ema_21'] else 'sell', axis=1)
+    # Enhanced Strategy Logic
+    trend = determine_trend(df)
+    pattern = check_3_bar_pattern(df)
+    pop_fade = check_pop_and_fade(df, trend)
 
+    # Check core conditions
+    if not (pattern or pop_fade):
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    if not (check_bos(df) or check_liquidity_sweep(df)):
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    if not check_order_block(df):
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    if not check_rsi_divergence(df):
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    # Apply dynamic volume threshold
+    if df['volume'].iloc[-1] < dynamic_params['volume_threshold'] * df['volume'][-10:-1].mean():
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    if is_red_folder_event_today():
+        df['signal'] = None
+        return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    # Avoid low ATR trades if specified
+    if dynamic_params['avoid_low_atr']:
+        atr = calculate_atr(df)
+        avg_atr = calculate_atr(df[-50:])
+        if atr < 0.5 * avg_atr:
+            df['signal'] = None
+            return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    # Tighten entry criteria if specified (e.g., require more confluences)
+    if dynamic_params['tighten_entry']:
+        # Placeholder: Require an additional confluence (e.g., stricter volume or ATR)
+        if df['volume'].iloc[-1] < 2.0 * df['volume'][-10:-1].mean():
+            df['signal'] = None
+            return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
+
+    # Determine signal
+    signal = 'buy' if pattern == "bullish" else 'sell'
+    if pop_fade:
+        signal = 'sell'
+
+    df['signal'] = signal
     return df[['Datetime', 'open', 'high', 'low', 'close', 'volume', 'signal']]
 
 def execute_trade(setup_type, direction, entry_price, stop_loss, take_profit, asset="MNQ"):

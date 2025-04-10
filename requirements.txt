@@ -2,6 +2,11 @@ ib_async
 schedule
 python-dotenv
 pytz
-sqlite3  # Included in Python stdlib, but listed for clarity
-yfinance
 pandas
+scikit-learn
+requests
+yfinance
+ib_insync
+python-binance
+cryptography
+aiohttp
