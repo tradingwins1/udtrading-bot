@@ -1,0 +1,12 @@
+services:
+  ib-trading-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: deploy-ib-trading-bot:20250412_v7  # Use a new tag
+    container_name: ib-bot
+    restart: always
+    env_file:
+      - deploy/.env
+    ports:
+      - "4004:4004"

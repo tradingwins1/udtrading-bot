@@ -1,11 +1,9 @@
 
 import pandas as pd
-import json
+from config import get_config
 
 # Load config
-with open('config.json') as f:
-    config = json.load(f)
-
+config = get_config()
 risk_cfg = config["strategy"]
 
 def apply_risk_management(signals_df):

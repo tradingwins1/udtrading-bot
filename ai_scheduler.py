@@ -1,21 +1,29 @@
+# ai_scheduler.py (Enhanced)
+# --------------------------------------------------
+# + Weekly ML retrain using trade logs
+# + Daily performance summary log
+# + Continues supporting session-based execution
+
+# ai_scheduler.py
 import schedule
 import asyncio
 import time
 from datetime import datetime
+import pytz
+import os
+from dotenv import load_dotenv
 from ibkr_client import IBKRTrader
 from red_news_filter import is_red_folder_event_today
 from live_tracker import add_live_trade, track_live_trades
 from price_feed import get_latest_price
 from execution import check_entry
-import pytz
-import os
-from dotenv import load_dotenv
-from db import init_db, log_trade
+from db import init_db, log_trade  # Use db.py functions
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Initialize the database
 init_db()
 load_dotenv()
 trader = IBKRTrader()
@@ -75,21 +83,29 @@ async def run_session(assets, session_name):
     for symbol, asset_type, timeframe in assets:
         # Skip assets not relevant to the session
         if asset_type == "crypto" and session_name != "london_ny":
+            logger.info(f"Skipping {symbol} (crypto) as session is {session_name}")
             continue
         if asset_type == "stock" and session_name != "ny":
+            logger.info(f"Skipping {symbol} (stock) as session is {session_name}")
             continue
 
         # Fetch candles (placeholder: implement in data_feed.py)
         from bot.data_feed import fetch_candles
+        logger.info(f"Fetching candles for {symbol} with timeframe {timeframe}")
         candles_df = await fetch_candles(symbol, timeframe)
         if candles_df is None or candles_df.empty:
-            logger.info(f"No data for {symbol}")
+            logger.info(f"No data for {symbol} with timeframe {timeframe}")
             continue
+        else:
+            logger.info(f"Successfully fetched candles for {symbol}: {len(candles_df)} rows")
 
         # Check entry
+        logger.info(f"Creating contract for {symbol} (type: {asset_type})")
         contract = trader.create_contract(symbol, asset_type)  # Placeholder: Implement in IBKRTrader
+        logger.info(f"Checking entry for {symbol}")
         entry = await check_entry(trader, candles_df, contract)
         if entry:
+            logger.info(f"Entry found for {symbol}: {entry}")
             add_live_trade(symbol, entry['entry_price'], entry['stop_loss'], entry['take_profit'], entry['direction'])
             log_trade({
                 "asset": symbol,
@@ -108,6 +124,8 @@ async def run_session(assets, session_name):
                 trade_counter["scalp"] += 1
             else:
                 trade_counter["swing"] += 1
+        else:
+            logger.info(f"No entry condition met for {symbol}")
 
     await track_open_trades()
 
@@ -121,6 +139,9 @@ async def run_session(assets, session_name):
         update_weights(adjustments)
         update_strategy_params(adjustments)
         logger.info(f"Applied strategy adjustments: {adjustments}")
+
+    # Add a sleep to reduce CPU usage after each session
+    await asyncio.sleep(120)  # Increased to 120 seconds after each session run
 
 async def main():
     await trader.connect()
@@ -139,7 +160,15 @@ async def main():
     logger.info("AI Scheduler running...")
     while True:
         schedule.run_pending()
-        await asyncio.sleep(1)
+        await asyncio.sleep(30)  # Increased to 30 seconds between schedule checks
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# === Weekly Scorer Retraining ===
+from scorer import train_scorer_model
+schedule.every().friday.at("20:00").do(train_scorer_model)
+
+# === Daily Performance Summary ===
+from performance_summary import print_summary
+schedule.every().day.at("21:00").do(lambda: print_summary("training/trade_log.csv"))

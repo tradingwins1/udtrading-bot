@@ -1,34 +1,40 @@
+# ibkr_client.py
 from ib_async import IB, Stock, Forex, Future, MarketOrder, LimitOrder
 import asyncio
 import random
 import logging
-import os  # Add this import
+import os
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Define ib and connect_ibkr at the module level for compatibility with execution.py
+ib = IB()
+
+async def connect_ibkr(host='127.0.0.1', port=4002, client_id=1):
+    """Connect to IBKR Gateway with retry logic."""
+    if not ib.isConnected():
+        for attempt in range(3):
+            try:
+                await ib.connectAsync(host, port, clientId=client_id)
+                logger.info("Connected to IBKR Gateway")
+                return ib
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(5)
+        raise Exception("Failed to connect to IBKR after retries")
+    return ib
+
 class IBKRTrader:
     """Handles IBKR Gateway connections and trading operations asynchronously."""
 
     def __init__(self):
-        self.ib = IB()
+        self.ib = ib  # Use the module-level ib instance
 
     async def connect(self):
         """Connect to IBKR Gateway with retry logic."""
-        if not self.ib.isConnected():
-            client_id = random.randint(1000, 9999)
-            host = os.getenv("IBKR_HOST", "127.0.0.1")
-            port = int(os.getenv("IBKR_PORT", 4002))  # Load port from .env
-            for attempt in range(3):
-                try:
-                    await self.ib.connectAsync(host, port, clientId=client_id)
-                    logger.info("Connected to IBKR Gateway")
-                    return
-                except Exception as e:
-                    logger.error(f"Connection attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(5)
-            raise Exception("Failed to connect to IBKR after retries")
+        await connect_ibkr()  # Use the module-level connect_ibkr function
 
     async def disconnect(self):
         """Disconnect from IBKR Gateway."""

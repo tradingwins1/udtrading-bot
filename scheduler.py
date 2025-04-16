@@ -1,10 +1,9 @@
-
-import json
+# scheduler.py
 import subprocess
 import time
-
-with open("config.json") as f:
-    config = json.load(f)
+from config import get_config
+# Load config
+config = get_config()
 
 print("⏱️ Starting full multi-asset run...")
 for asset in config["assets"]:

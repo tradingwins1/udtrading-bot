@@ -1,86 +1,43 @@
 import pandas as pd
+import numpy as np
+from ta.trend import SMAIndicator
 
-def detect_bos(df, swing_lookback=3):
+def check_bos(df, lookback=3):
     """
-    Detect Break of Structure (BOS) by identifying swing highs/lows and 
-    tracking if price breaks them within a forward window.
-    Returns a DataFrame with BOS signals.
+    Detect Break of Structure (BOS) in the given DataFrame.
+    Parameters:
+    - df: DataFrame with columns ['open', 'high', 'low', 'close', 'volume'] and index as datetime
+    - lookback: Number of candles to look back for swing highs/lows
+    Returns:
+    - True if BOS detected, False otherwise
     """
-    bos_signals = []
-    highs = df['high'].tolist()
-    lows = df['low'].tolist()
-    closes = df['close'].tolist()
-    dates = df['Datetime'].tolist() if 'Datetime' in df.columns else df.index.to_list()
-
-    for i in range(swing_lookback, len(df) - swing_lookback):
-        is_swing_high = all(highs[i] > highs[i - j] and highs[i] > highs[i + j] for j in range(1, swing_lookback + 1))
-        if is_swing_high:
-            swing_high = highs[i]
-            for k in range(i + 1, min(i + swing_lookback + 10, len(df))):  # Increased forward window
-                if closes[k] > swing_high:
-                    bos_signals.append({
-                        'Date': dates[k],
-                        'Type': 'BOS High',
-                        'Level': swing_high,
-                        'Index': k
-                    })
-                    break
-
-        is_swing_low = all(lows[i] < lows[i - j] and lows[i] < lows[i + j] for j in range(1, swing_lookback + 1))
-        if is_swing_low:
-            swing_low = lows[i]
-            for k in range(i + 1, min(i + swing_lookback + 10, len(df))):  # Increased forward window
-                if closes[k] < swing_low:
-                    bos_signals.append({
-                        'Date': dates[k],
-                        'Type': 'BOS Low',
-                        'Level': swing_low,
-                        'Index': k
-                    })
-                    break
-
-    return pd.DataFrame(bos_signals)
-
-def check_bos(df, swing_lookback=3):
-    bos_signals = detect_bos(df, swing_lookback)
-    if bos_signals.empty:
+    if len(df) < lookback * 2 + 1:
         return False
 
-    recent_datetimes = df['Datetime'].iloc[-2:].values
-    for _, signal in bos_signals.iterrows():
-        if pd.to_datetime(signal['Date']) in recent_datetimes:
-            return True
+    # Ensure column names are lowercase
+    df = df.rename(columns=lambda x: x.lower())
 
-    return False
+    # Check for required columns
+    required_columns = ['open', 'high', 'low', 'close', 'volume']
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"DataFrame must contain columns: {required_columns}")
 
-def check_bos_with_retest(df, swing_lookback=3, tolerance=0.5):
-    """
-    Detect if there's a BOS followed by a retest and a bullish or bearish engulfing candle.
-    """
-    bos_df = detect_bos(df, swing_lookback)
-    if bos_df.empty:
-        return False
+    highs = df['high']
+    lows = df['low']
+    closes = df['close']
 
-    last_bos = bos_df.iloc[-1]
-    bos_level = last_bos['Level']
-    bos_type = last_bos['Type']
-    bos_index = last_bos['Index']
+    # Identify swing highs and lows
+    is_swing_high = all(highs.iloc[-1] > highs.iloc[-lookback-1:-1]) and all(highs.iloc[-1] > highs.iloc[-lookback-1:-1].shift(-1))
+    is_swing_low = all(lows.iloc[-1] < lows.iloc[-lookback-1:-1]) and all(lows.iloc[-1] < lows.iloc[-lookback-1:-1].shift(-1))
 
-    # Search for retest + engulf combo after BOS
-    for i in range(bos_index + 1, len(df) - 2):  # allow checking next_candle safely
-        candle = df.iloc[i]
-        next_candle = df.iloc[i + 1]
-
-        if bos_type == 'BOS High' and abs(candle['low'] - bos_level) <= tolerance:
-            if (next_candle['close'] > next_candle['open'] and
-                next_candle['close'] > candle['close'] and
-                next_candle['open'] <= candle['close']):
+    # Detect BOS
+    if is_swing_high:
+        for i in range(len(df) - lookback - 1, len(df)):
+            if closes.iloc[i] > highs.iloc[-1]:
                 return True
-
-        elif bos_type == 'BOS Low' and abs(candle['high'] - bos_level) <= tolerance:
-            if (next_candle['close'] < next_candle['open'] and
-                next_candle['close'] < candle['close'] and
-                next_candle['open'] >= candle['close']):
+    elif is_swing_low:
+        for i in range(len(df) - lookback - 1, len(df)):
+            if closes.iloc[i] < lows.iloc[-1]:
                 return True
 
     return False

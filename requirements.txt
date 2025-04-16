@@ -10,3 +10,10 @@ ib_insync
 python-binance
 cryptography
 aiohttp
+numpy
+ta
+xgboost
+joblib
+matplotlib
+seaborn
+alpha_vantage  # Optional, for cleaner API access

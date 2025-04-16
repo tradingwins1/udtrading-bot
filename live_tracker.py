@@ -2,13 +2,12 @@
 import time
 import pandas as pd
 from finnhub_client import get_live_price
-from discord_alert import send_discord_alert
-from config import load_config
+from discord_alert import send_alert
+from config import get_config
 
-config = load_config()
+config = get_config()
 
 open_trades = []
-
 
 def track_live_trades():
     global open_trades
@@ -55,15 +54,25 @@ def track_live_trades():
         pnl = round(abs(entry - current_price), 2)
         pnl = pnl if status == 'TP' else -pnl
 
-        alert = f"**{symbol} {status} Alert**\n" \
-                f"Entry: {entry}\nCurrent: {current_price}\n{comment}\nPnL: {pnl}"
+        send_alert(
+            symbol=symbol,
+            side=direction,
+            entry=entry,
+            sl=sl,
+            tp=tp,
+            timeframe="5m",
+            confidence=8,
+            alert_type="scalping",
+            reason=f"{status}: {comment} (PnL: {pnl})"
+        )
 
-        send_discord_alert(alert, alert_type="scalping")
         closed_trades.append(trade)
 
     # Remove closed trades from the open list
     open_trades = [t for t in open_trades if t not in closed_trades]
 
+    # Add a sleep to reduce CPU usage
+    time.sleep(15)  # Sleep for 1 second between checks to prevent high CPU usage
 
 def add_live_trade(symbol, entry, sl, tp, direction):
     global open_trades

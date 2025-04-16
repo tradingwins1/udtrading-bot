@@ -5,9 +5,64 @@ from ibkr_client import ib, connect_ibkr
 from discord_alert import send_alert
 from dotenv import load_dotenv
 import logging
+import pandas as pd
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+async def check_entry(trader, candles_df: pd.DataFrame, contract):
+    """
+    Evaluates entry conditions for a trade based on candlestick data.
+    
+    Args:
+        trader: IBKRTrader instance for interacting with IBKR.
+        candles_df: DataFrame containing candlestick data.
+        contract: Contract object for the asset.
+    
+    Returns:
+        dict: Entry decision with keys 'entry_price', 'stop_loss', 'take_profit', 'direction', and 'score'.
+              Returns None if no entry condition is met.
+    """
+    if candles_df.empty:
+        logging.info("No candlestick data available for entry evaluation.")
+        return None
+
+    # Get the latest and previous candles
+    latest_candle = candles_df.iloc[-1]
+    previous_candle = candles_df.iloc[-2] if len(candles_df) > 1 else None
+
+    if previous_candle is None:
+        logging.info("Not enough candlestick data for entry evaluation.")
+        return None
+
+    # Simple breakout logic: Buy if the latest close is above the previous high
+    entry_price = latest_candle['close']
+    direction = None
+    score = 0.5  # Default confidence score
+
+    if latest_candle['close'] > previous_candle['high']:
+        direction = 'buy'
+        stop_loss = previous_candle['low']
+        take_profit = entry_price + 2 * (entry_price - stop_loss)  # 2:1 risk-reward ratio
+        score = 0.95  # High confidence for a breakout
+    # Sell if the latest close is below the previous low
+    elif latest_candle['close'] < previous_candle['low']:
+        direction = 'sell'
+        stop_loss = previous_candle['high']
+        take_profit = entry_price - 2 * (stop_loss - entry_price)  # 2:1 risk-reward ratio
+        score = 0.95
+
+    if direction:
+        logging.info(f"Entry condition met: {direction} at {entry_price} with SL {stop_loss} and TP {take_profit}")
+        return {
+            'entry_price': entry_price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'direction': direction,
+            'score': score
+        }
+    logging.info("No entry condition met.")
+    return None
 
 def execute_trades(signals_df, symbol, asset_type, candles_df):
     print("🚀 Executing trade...")
