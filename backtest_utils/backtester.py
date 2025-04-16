@@ -46,6 +46,8 @@ class BacktestEngine:
             logger.info("Loading mock data from %s...", mock_path)
             try:
                 df = pd.read_csv(mock_path, parse_dates=['timestamp'], index_col='timestamp')
+                # Adjust prices for TSLA split (divide by 30)
+                df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']] / 30
                 # Localize timestamps to US/Eastern
                 if df.index.tz is None:
                     df.index = df.index.tz_localize('US/Eastern')
@@ -74,6 +76,8 @@ class BacktestEngine:
                 cache_path = os.path.join('data', self.cache_file)
                 if os.path.exists(cache_path):
                     df = pd.read_csv(cache_path, parse_dates=['timestamp'], index_col='timestamp')
+                    # Adjust prices for TSLA split (divide by 30)
+                    df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']] / 30
                     # Localize timestamps to US/Eastern
                     if df.index.tz is None:
                         df.index = df.index.tz_localize('US/Eastern')
@@ -82,6 +86,8 @@ class BacktestEngine:
                     return df
             df = fetcher.fetch_5min_tsla(cache_file=self.cache_file)
             df = fetcher.clean_data(df)
+            # Adjust prices for TSLA split (divide by 30)
+            df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']] / 30
             # Localize timestamps to US/Eastern
             if df.index.tz is None:
                 df.index = df.index.tz_localize('US/Eastern')
@@ -120,7 +126,8 @@ class BacktestEngine:
                     'Number of Trades': 0,
                     'Win Rate': 0.0,
                     'Avg Trade PNL': 0.0,
-                    'Avg Holding Period (Hours)': 0.0
+                    'Avg Holding Period (Hours)': 0.0,
+                    'Avg Holding Period Bars': 0.0
                 }
             returns = self.results['Equity'].pct_change().dropna()
             benchmark_returns = self.data['Close'].pct_change().reindex(returns.index).dropna()
@@ -140,7 +147,8 @@ class BacktestEngine:
                 'Number of Trades': len(self.trades),
                 'Win Rate': len(self.trades[self.trades['pnl'] > 0]) / len(self.trades) * 100 if len(self.trades) > 0 else 0,
                 'Avg Trade PNL': self.trades['pnl'].mean() if len(self.trades) > 0 else 0,
-                'Avg Holding Period (Hours)': self.trades['holding_period'].mean() if len(self.trades) > 0 else 0
+                'Avg Holding Period (Hours)': self.trades['holding_period'].mean() if len(self.trades) > 0 else 0,
+                'Avg Holding Period Bars': (self.trades['exit_bar'] - self.trades['entry_bar']).mean() if 'entry_bar' in self.trades.columns and len(self.trades) > 0 else 0
             }
             logger.debug("Metrics calculated: %s", metrics)
             return metrics

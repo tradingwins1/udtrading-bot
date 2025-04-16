@@ -10,12 +10,45 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
-import os  # Added for directory creation
-from trend_detector import determine_trend
-from utils import check_3_bar_pattern, check_pop_and_fade, calculate_atr
-from scorer import check_dip_and_rip, check_mean_reversal
+import os
 from ta.volatility import BollingerBands
 from ta.momentum import StochasticOscillator, RSIIndicator
+
+# Mock trend_detector and utils for compatibility
+def determine_trend(candles_df):
+    sma20 = candles_df['close'].rolling(window=20).mean()
+    sma200 = candles_df['close'].rolling(window=200).mean()
+    if sma20.iloc[-1] > sma200.iloc[-1]:
+        return 'up'
+    elif sma20.iloc[-1] < sma200.iloc[-1]:
+        return 'down'
+    return 'neutral'
+
+def check_3_bar_pattern(candles_df):
+    if len(candles_df) < 3:
+        return False
+    last_three = candles_df.iloc[-3:]
+    bar_1_bearish = last_three.iloc[0]['close'] < last_three.iloc[0]['open']
+    bar_2_bullish = last_three.iloc[1]['close'] > last_three.iloc[1]['open']
+    bar_3_bullish = last_three.iloc[2]['close'] > last_three.iloc[2]['open']
+    return bar_1_bearish and bar_2_bullish and bar_3_bullish
+
+def check_pop_and_fade(candles_df, trend):
+    if len(candles_df) < 5:
+        return False
+    last_five = candles_df.iloc[-5:]
+    spike = last_five.iloc[-2]['close'] > last_five.iloc[-3]['close'] * 1.02
+    reversal = last_five.iloc[-1]['close'] < last_five.iloc[-2]['close']
+    return spike and reversal and trend == 'down'
+
+def calculate_atr(candles_df):
+    if len(candles_df) < 14:
+        return 0.0
+    atr = (candles_df['high'].iloc[-14:] - candles_df['low'].iloc[-14:]).mean()
+    return atr
+
+# Import scorer functions
+from scorer import check_dip_and_rip, check_mean_reversal
 
 MODEL_PATH = "models/trade_predictor.pkl"
 
@@ -29,8 +62,8 @@ def extract_features(trade_data, candles_df):
     dip_and_rip = check_dip_and_rip(candles_df)
     mean_reversal = check_mean_reversal(candles_df)
     atr = calculate_atr(candles_df)
-    avg_atr = calculate_atr(candles_df[-50:])
-    volume_spike = candles_df['volume'].iloc[-1] > 1.5 * candles_df['volume'][-10:-1].mean()
+    avg_atr = calculate_atr(candles_df[-50:]) if len(candles_df) >= 50 else atr
+    volume_spike = candles_df['volume'].iloc[-1] > 1.5 * candles_df['volume'].iloc[-10:-1].mean()
     
     # Ensure column names are lowercase
     candles_df = candles_df.rename(columns=lambda x: x.lower())
@@ -155,14 +188,13 @@ def assess_trade_performance(trade_log_path='training/trade_log.csv', min_trades
                 if feature_importances.get('atr_ratio', 0) < 0.1:
                     adjustments['avoid_low_atr'] = True
 
-        
                 print("\n📊 Strategy Adjustment Suggestions:")
                 for key, value in adjustments.items():
                     print(f"  - {key}: {value}")
 
         return adjustments
     except Exception as e:
-        print(f"Error assessing performance: {e}")
+        print(f"Error assessing performance: %s", e)
         return None
 
 def update_strategy(adjustments):

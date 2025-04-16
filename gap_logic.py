@@ -4,12 +4,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def detect_gap_fill_reversal(data, gap_threshold=0.01, lookahead_bars=18):
+def detect_gap_fill_reversal(data, gap_threshold=0.003, lookahead_bars=18):
     """
     Detects gap fill reversal setups.
     Args:
         data (DataFrame): Price data with datetime index.
-        gap_threshold (float): Minimum gap % to qualify (default 1%).
+        gap_threshold (float): Minimum gap % to qualify (default 0.3%).
         lookahead_bars (int): Bars to look ahead for reversal (1 bar = 5 min).
     Returns:
         DataFrame: Signals DataFrame with entry points in BOS format.
@@ -27,16 +27,26 @@ def detect_gap_fill_reversal(data, gap_threshold=0.01, lookahead_bars=18):
         df['gap_pct'] = (df['Open'] - df['prev_close']) / df['prev_close']
         df['gap_type'] = np.where(df['gap_pct'] > gap_threshold, 'up',
                                  np.where(df['gap_pct'] < -gap_threshold, 'down', None))
+        # Volume spike confirmation
+        df['avg_volume'] = df['Volume'].shift(1).rolling(14).mean()
+        df['volume_spike'] = df['Volume'] > df['avg_volume'] * 1.05
         logger.debug("Gap ups identified: %s, Gap downs: %s", 
                      (df['gap_type'] == 'up').sum(), (df['gap_type'] == 'down').sum())
     except Exception as e:
         logger.error("Error calculating gap metrics: %s", e)
         raise
 
+    # NY Market Hours (9:30 AM - 4:00 PM EST)
+    df['time'] = df.index.time
+    df['is_ny_open'] = (df['time'] >= pd.Timestamp('09:30').time()) & (df['time'] <= pd.Timestamp('16:00').time())
+    logger.debug("NY market periods identified: %s", df['is_ny_open'].sum())
+
     for i in range(1, len(df) - lookahead_bars):
         try:
             row = df.iloc[i]
-            if row['gap_type'] is None:
+            if not df['is_ny_open'].iloc[i]:
+                continue
+            if row['gap_type'] is None or not row['volume_spike']:
                 continue
 
             window = df.iloc[i:i+lookahead_bars]
@@ -52,7 +62,7 @@ def detect_gap_fill_reversal(data, gap_threshold=0.01, lookahead_bars=18):
                     'timestamp': row.name,
                     'Type': 'Gap Fill Reversal',
                     'Direction': direction,
-                    'Confluences': {'Previous Day Gap Fill': True},
+                    'Confluences': {'Previous Day Gap Fill': True, 'Volume Spike': True},
                     'PDH': np.nan,
                     'PDL': np.nan,
                     'PMH': np.nan,

@@ -6,6 +6,8 @@ from ta.volatility import AverageTrueRange
 from ta.trend import SMAIndicator
 import logging
 import os
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,8 @@ def extract_features(candles_df):
         features['atr'] = latest['atr']
         features['price_above_sma20'] = 1 if latest['Close'] > latest['sma20'] else 0
         features['price_above_sma200'] = 1 if latest['Close'] > latest['sma200'] else 0
-        features['volume_spike'] = 1 if latest['Volume'] > candles_df['Volume'].shift(1).mean() * 1.2 else 0
+        features['volume_spike'] = 1 if latest['Volume'] > candles_df['Volume'].shift(1).mean() * 1.05 else 0
+        features['atr_ratio'] = latest['atr'] / candles_df['atr'].mean() if candles_df['atr'].mean() != 0 else 1.0
         
         return features
     except Exception as e:
@@ -93,22 +96,71 @@ def score_setup(candles_df):
                 score += 2.0  # Oversold
             if features.get('volume_spike', 0):
                 score += 2.0  # Volume spike
-            if features.get('price_above_sma20', 0):
-                score += 1.0  # Bullish momentum
+            if features.get('price_above_sma20', 0) and features.get('price_above_sma200', 0):
+                score += 2.0  # Strong trend alignment
+            if features.get('atr_ratio', 0) < 1.0:
+                score += 1.0  # Low volatility, safer entry
             logger.debug("Rule-based score: %s", score)
             return float(np.clip(score, 0, 10))
     except Exception as e:
         logger.error("Error in scoring setup: %s", e)
         return 0.0
 
-def train_scorer_model(data, labels):
+def train_scorer_model(data=None, labels=None):
     """
-    Placeholder for training the XGBoost model.
+    Train the XGBoost model using historical trade data.
     """
-    logger.debug("Placeholder: train_scorer_model")
+    logger.debug("Training XGBoost model for scoring setups")
     try:
-        model = xgb.XGBRegressor()
-        model.fit(data, labels)
+        # Load historical trade data from trade_logs.db
+        from learn import load_trades
+        trade_df = load_trades()
+        if trade_df.empty:
+            logger.error("No trade data available for training")
+            return
+
+        # Extract features for each trade
+        features_list = []
+        scores = []
+        for idx, trade in trade_df.iterrows():
+            # Mock candles_df based on trade data (since we don't have full OHLCV data)
+            candles_data = {
+                'Close': [trade['entry_price']] * 50 + [trade['exit_price']],
+                'High': [trade['entry_price'] * 1.01] * 50 + [trade['exit_price'] * 1.01],
+                'Low': [trade['entry_price'] * 0.99] * 50 + [trade['exit_price'] * 0.99],
+                'Volume': [1000] * 51  # Mock volume
+            }
+            candles_df = pd.DataFrame(candles_data)
+            features = extract_features(candles_df)
+            if features:
+                features_list.append(list(features.values()))
+                # Score based on PNL: 10 for large wins, 0 for large losses
+                score = np.clip((trade['pnl'] + 200) / 40, 0, 10)  # Map PNL [-200, 200] to [0, 10]
+                scores.append(score)
+
+        if not features_list or len(features_list) < 50:
+            logger.error("Insufficient data for training: %s samples", len(features_list))
+            return
+
+        # Train XGBoost model
+        X = np.array(features_list)
+        y = np.array(scores)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        model = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.1,
+            random_state=42
+        )
+        model.fit(X_train, y_train)
+
+        # Evaluate model
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        logger.info("Model trained, MSE on test set: %s", mse)
+
+        # Save model
         os.makedirs('models', exist_ok=True)
         model.save_model(os.path.join('models', 'setup_scorer.pkl'))
         logger.info("Model trained and saved to models/setup_scorer.pkl")

@@ -10,7 +10,7 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
-def detect_ug_signals(df, lookback=3, volume_factor=1.2, wick_body_ratio=1.0, fib_84_level=0.84):
+def detect_ug_signals(df, lookback=3, volume_factor=1.05, wick_body_ratio=0.5, fib_84_level=0.84):
     """
     Detect UG Trading Bot signals with prioritized confluences on 5-minute TSLA data.
     Generates only one signal per bar to avoid duplicates.
@@ -53,23 +53,23 @@ def detect_ug_signals(df, lookback=3, volume_factor=1.2, wick_body_ratio=1.0, fi
     df['is_sweep_low'] = (df['wick_low'] > df['body'] * wick_body_ratio)
     logger.debug("Sweep lows identified: %s", df['is_sweep_low'].sum())
 
-    # NY Market Open (9:30-11:30 AM EST)
+    # NY Market Hours (9:30 AM - 4:00 PM EST)
     df['time'] = df.index.time
     logger.debug("Sample timestamps: %s", df.index[:5].tolist())
     logger.debug("Sample times: %s", df['time'][:5].tolist())
-    df['is_ny_open'] = (df['time'] >= pd.Timestamp('09:30').time()) & (df['time'] <= pd.Timestamp('11:30').time())
-    logger.debug("NY Open periods identified: %s", df['is_ny_open'].sum())
+    df['is_ny_open'] = (df['time'] >= pd.Timestamp('09:30').time()) & (df['time'] <= pd.Timestamp('16:00').time())
+    logger.debug("NY market periods identified: %s", df['is_ny_open'].sum())
 
     # Log total bars before filtering
     total_bars = len(df)
     logger.debug("Total bars before filtering: %s", total_bars)
 
-    # Filter for NY Open
+    # Filter for NY market hours
     ny_open_bars = df[df['is_ny_open']]
-    logger.debug("Bars after NY Open filter: %s", len(ny_open_bars))
+    logger.debug("Bars after NY market filter: %s", len(ny_open_bars))
 
     # Generate Gap Fill Signals from gap_logic.py
-    gap_signals = detect_gap_fill_reversal(df, gap_threshold=0.01)
+    gap_signals = detect_gap_fill_reversal(df)
     gap_signals_df = pd.DataFrame()
     if not gap_signals.empty:
         gap_signals_df = gap_signals
@@ -145,7 +145,8 @@ def detect_ug_signals(df, lookback=3, volume_factor=1.2, wick_body_ratio=1.0, fi
                                 retest_condition = (df['High'].iloc[j] >= retrace_level and 
                                                     df['High'].iloc[j] <= ob_high and 
                                                     df['Low'].iloc[j] >= ob_low)
-                                if retest_condition:
+                                # Require both 3-bar pattern and gap fill for BOS signals
+                                if retest_condition and is_3_bar_pattern and has_gap_fill:
                                     selected_signal = {
                                         'timestamp': df.index[j],
                                         'Type': 'BOS Low Retest',
@@ -170,28 +171,29 @@ def detect_ug_signals(df, lookback=3, volume_factor=1.2, wick_body_ratio=1.0, fi
                                     logger.debug("Selected BOS Low Retest at bar %s, timestamp=%s", j, df.index[j])
                                     break
                             else:
-                                selected_signal = {
-                                    'timestamp': df.index[k],
-                                    'Type': 'BOS Low',
-                                    'Level': swing_low,
-                                    'Volume': df['Volume'].iloc[k],
-                                    'VWAP': df['VWAP'].iloc[k],
-                                    'RSI': df['RSI'].iloc[k],
-                                    'Direction': 'short',
-                                    'Confluences': {
-                                        'Break and Retest with Displacement': True,
-                                        'Order Block Continuation': False,
-                                        'Previous Day Gap Fill': has_gap_fill,
-                                        'Pop and Fade Out': False,
-                                        '3 Bar Pattern': is_3_bar_pattern
-                                    },
-                                    'PDH': np.nan,
-                                    'PDL': np.nan,
-                                    'PMH': np.nan,
-                                    'PML': np.nan,
-                                    'BOS_Level': swing_low
-                                }
-                                logger.debug("Selected BOS Low at bar %s, timestamp=%s", k, df.index[k])
+                                if is_3_bar_pattern and has_gap_fill:
+                                    selected_signal = {
+                                        'timestamp': df.index[k],
+                                        'Type': 'BOS Low',
+                                        'Level': swing_low,
+                                        'Volume': df['Volume'].iloc[k],
+                                        'VWAP': df['VWAP'].iloc[k],
+                                        'RSI': df['RSI'].iloc[k],
+                                        'Direction': 'short',
+                                        'Confluences': {
+                                            'Break and Retest with Displacement': True,
+                                            'Order Block Continuation': False,
+                                            'Previous Day Gap Fill': has_gap_fill,
+                                            'Pop and Fade Out': False,
+                                            '3 Bar Pattern': is_3_bar_pattern
+                                        },
+                                        'PDH': np.nan,
+                                        'PDL': np.nan,
+                                        'PMH': np.nan,
+                                        'PML': np.nan,
+                                        'BOS_Level': swing_low
+                                    }
+                                    logger.debug("Selected BOS Low at bar %s, timestamp=%s", k, df.index[k])
                             break
 
             if selected_signal:

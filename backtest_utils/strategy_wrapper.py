@@ -40,13 +40,13 @@ class UGBacktestStrategy:
             logger.error("Error calculating indicators: %s", e)
             raise
 
-    def calculate_position_size(self, entry_price, stop_loss):
+    def calculate_position_size(self, entry_price, stop_loss, atr):
         try:
-            risk_amount = 200  # 2% of $10,000
-            risk_per_share = abs(entry_price - stop_loss)
+            risk_amount = 100  # 1% of $10,000
+            risk_per_share = max(abs(entry_price - stop_loss), atr)  # Use ATR to adjust risk
             size = int(risk_amount / risk_per_share) if risk_per_share != 0 else 10  # Minimum size of 10
             size = max(size, 10)  # Ensure minimum position size
-            logger.debug("Calculated position size: %s for entry_price=%s, stop_loss=%s", size, entry_price, stop_loss)
+            logger.debug("Calculated position size: %s for entry_price=%s, stop_loss=%s, atr=%s", size, entry_price, stop_loss, atr)
             return size
         except Exception as e:
             logger.error("Error calculating position size: %s", e)
@@ -57,7 +57,7 @@ class UGBacktestStrategy:
         try:
             # Generate signals
             bos_signals = detect_ug_signals(self.data)
-            gap_signals = detect_gap_fill_reversal(self.data, gap_threshold=0.01)
+            gap_signals = detect_gap_fill_reversal(self.data)
 
             # Check for duplicates within each signal set
             if not bos_signals.empty:
@@ -133,8 +133,8 @@ class UGBacktestStrategy:
                     daily_risk = 0
                     logger.debug("New day %s: Resetting trade counter and risk", day)
 
-                # Daily trade limit (max 5 trades or $1000 risk)
-                if self.daily_trades.get(day, 0) >= 5 or daily_risk >= 1000:
+                # Daily trade limit (max 3 trades or $500 risk)
+                if self.daily_trades.get(day, 0) >= 3 or daily_risk >= 500:
                     logger.debug("Daily trade/risk limit reached for %s at bar %s: trades=%s, risk=%s", 
                                  day, i, self.daily_trades.get(day, 0), daily_risk)
                     continue
@@ -169,13 +169,14 @@ class UGBacktestStrategy:
 
                     try:
                         if direction == 'long':
-                            stop_loss = current['Close'] * 0.98
-                            stop_loss = min(stop_loss, bos_level, pdl) if not pd.isna(pdl) else min(stop_loss, bos_level)
+                            stop_loss = current['Close'] - 2 * atr
                             stop_loss = max(stop_loss, current['Close'] * 0.95)
-                            size = self.calculate_position_size(current['Close'], stop_loss)
+                            stop_loss = min(stop_loss, bos_level, pdl) if not pd.isna(pdl) else min(stop_loss, bos_level)
+                            size = self.calculate_position_size(current['Close'], stop_loss, atr)
                             pos_type = 'long'
-                            tp1 = current['Close'] + 3 * (current['Close'] - stop_loss)
-                            tp2 = current['Close'] + 4 * (current['Close'] - stop_loss)
+                            risk = current['Close'] - stop_loss
+                            tp1 = current['Close'] + 1.5 * risk  # 1.5:1 R:R
+                            tp2 = current['Close'] + 2 * risk    # 2:1 R:R
                             if not pd.isna(pdh) and pdh < tp2:
                                 tp2 = pdh
                             if not pd.isna(pmh) and pmh < tp2:
@@ -183,13 +184,14 @@ class UGBacktestStrategy:
                             if not pd.isna(pdh) and pdh < tp1:
                                 tp1 = pdh
                         elif direction == 'short':
-                            stop_loss = current['Close'] * 1.02
-                            stop_loss = max(stop_loss, bos_level, pdh) if not pd.isna(pdh) else max(stop_loss, bos_level)
+                            stop_loss = current['Close'] + 2 * atr
                             stop_loss = min(stop_loss, current['Close'] * 1.05)
-                            size = self.calculate_position_size(current['Close'], stop_loss)
+                            stop_loss = max(stop_loss, bos_level, pdh) if not pd.isna(pdh) else max(stop_loss, bos_level)
+                            size = self.calculate_position_size(current['Close'], stop_loss, atr)
                             pos_type = 'short'
-                            tp1 = current['Close'] - 3 * (stop_loss - current['Close'])
-                            tp2 = current['Close'] - 4 * (stop_loss - current['Close'])
+                            risk = stop_loss - current['Close']
+                            tp1 = current['Close'] - 1.5 * risk  # 1.5:1 R:R
+                            tp2 = current['Close'] - 2 * risk    # 2:1 R:R
                             if not pd.isna(pdl) and pdl > tp2:
                                 tp2 = pdl
                             if not pd.isna(pml) and pml > tp2:
@@ -197,7 +199,7 @@ class UGBacktestStrategy:
                             if not pd.isna(pdl) and pdl > tp1:
                                 tp1 = pdl
 
-                        if size > 0 and confidence_score >= 0.0:  # Lowered to 0.0 to ensure trades
+                        if size > 0 and confidence_score >= 3.0:  # Adjusted threshold
                             entry_price = current['Close'] * (1 + self.slippage if pos_type == 'long' else 1 - self.slippage)
                             self.positions.append({
                                 'entry_price': entry_price,
@@ -216,7 +218,7 @@ class UGBacktestStrategy:
                                 'confluences': confluences
                             })
                             self.daily_trades[day] = self.daily_trades.get(day, 0) + 1
-                            daily_risk += 200
+                            daily_risk += 100  # 1% risk
                             logger.debug("Opened position at bar %s: type=%s, size=%s, signal=%s, confidence=%s, confluences=%s, daily_trades=%s, daily_risk=%s", 
                                          i, pos_type, size, signal_type, confidence_score, confluences, self.daily_trades[day], daily_risk)
                         else:
@@ -260,15 +262,21 @@ class UGBacktestStrategy:
                                 'result': 'win' if pnl > 0 else 'loss',
                                 'setup_type': 'scalp',
                                 'rr_ratio': (exit_price - entry_price) / (entry_price - stop_loss) if pos['type'] == 'long' else (entry_price - exit_price) / (stop_loss - entry_price),
-                                'confluences': pos['confluences']
+                                'confluences': pos['confluences'],
+                                'entry_bar': pos['entry_bar'],
+                                'exit_bar': i
                             }
                             self.trades.append(trade_data)
                             update_trade_log(trade_data, self.data.iloc[max(0, i - 50):i + 1].copy())
+                            logger.info("Trade closed: signal_type=%s, pnl=%s, holding_period=%s hours", trade_data['signal_type'], trade_data['pnl'], trade_data['holding_period'])
                             self.positions.remove(pos)
                             logger.debug("Closed position at bar %s due to timeout: pnl=%s", i, pnl)
                             continue
 
                         if pos['type'] == 'long':
+                            # Update trailing stop-loss if breakeven
+                            if pos['breakeven']:
+                                pos['stop_loss'] = max(pos['stop_loss'], current['Close'] * 0.99)
                             if not pos['breakeven'] and current['Close'] >= tp1:
                                 pos['size'] = size // 2
                                 pos['breakeven'] = True
@@ -291,11 +299,14 @@ class UGBacktestStrategy:
                                     'reason': 'TP1 Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (tp1 - entry_price) / (entry_price - stop_loss) if entry_price != stop_loss else 2.0,
-                                    'confluences': pos['confluences']
+                                    'rr_ratio': (tp1 - entry_price) / (entry_price - stop_loss) if entry_price != stop_loss else 1.5,
+                                    'confluences': pos['confluences'],
+                                    'entry_bar': pos['entry_bar'],
+                                    'exit_bar': i
                                 }
                                 self.trades.append(trade_data)
                                 update_trade_log(trade_data, self.data.iloc[max(0, i - 50):i + 1].copy())
+                                logger.info("Trade closed: signal_type=%s, pnl=%s, holding_period=%s hours", trade_data['signal_type'], trade_data['pnl'], trade_data['holding_period'])
                                 logger.debug("Closed TP1 at bar %s: pnl=%s", i, pnl)
 
                             if pos['breakeven'] and (current['Close'] >= tp2 or current['Close'] <= stop_loss):
@@ -320,14 +331,20 @@ class UGBacktestStrategy:
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
                                     'rr_ratio': (tp2 - entry_price) / (entry_price - stop_loss) if entry_price != stop_loss else 2.0,
-                                    'confluences': pos['confluences']
+                                    'confluences': pos['confluences'],
+                                    'entry_bar': pos['entry_bar'],
+                                    'exit_bar': i
                                 }
                                 self.trades.append(trade_data)
                                 update_trade_log(trade_data, self.data.iloc[max(0, i - 50):i + 1].copy())
+                                logger.info("Trade closed: signal_type=%s, pnl=%s, holding_period=%s hours", trade_data['signal_type'], trade_data['pnl'], trade_data['holding_period'])
                                 self.positions.remove(pos)
                                 logger.debug("Closed position at bar %s: pnl=%s, reason=%s", i, pnl, trade_data['reason'])
 
                         elif pos['type'] == 'short':
+                            # Update trailing stop-loss if breakeven
+                            if pos['breakeven']:
+                                pos['stop_loss'] = min(pos['stop_loss'], current['Close'] * 1.01)
                             if not pos['breakeven'] and current['Close'] <= tp1:
                                 pos['size'] = size // 2
                                 pos['breakeven'] = True
@@ -350,11 +367,14 @@ class UGBacktestStrategy:
                                     'reason': 'TP1 Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (entry_price - tp1) / (stop_loss - entry_price) if stop_loss != entry_price else 2.0,
-                                    'confluences': pos['confluences']
+                                    'rr_ratio': (entry_price - tp1) / (stop_loss - entry_price) if stop_loss != entry_price else 1.5,
+                                    'confluences': pos['confluences'],
+                                    'entry_bar': pos['entry_bar'],
+                                    'exit_bar': i
                                 }
                                 self.trades.append(trade_data)
                                 update_trade_log(trade_data, self.data.iloc[max(0, i - 50):i + 1].copy())
+                                logger.info("Trade closed: signal_type=%s, pnl=%s, holding_period=%s hours", trade_data['signal_type'], trade_data['pnl'], trade_data['holding_period'])
                                 logger.debug("Closed TP1 at bar %s: pnl=%s", i, pnl)
 
                             if pos['breakeven'] and (current['Close'] <= tp2 or current['Close'] >= stop_loss):
@@ -379,10 +399,13 @@ class UGBacktestStrategy:
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
                                     'rr_ratio': (entry_price - tp2) / (stop_loss - entry_price) if stop_loss != entry_price else 2.0,
-                                    'confluences': pos['confluences']
+                                    'confluences': pos['confluences'],
+                                    'entry_bar': pos['entry_bar'],
+                                    'exit_bar': i
                                 }
                                 self.trades.append(trade_data)
                                 update_trade_log(trade_data, self.data.iloc[max(0, i - 50):i + 1].copy())
+                                logger.info("Trade closed: signal_type=%s, pnl=%s, holding_period=%s hours", trade_data['signal_type'], trade_data['pnl'], trade_data['holding_period'])
                                 self.positions.remove(pos)
                                 logger.debug("Closed position at bar %s: pnl=%s, reason=%s", i, pnl, trade_data['reason'])
 
