@@ -230,7 +230,7 @@ class UGBacktestStrategy:
                     confluences = signal_info['Confluences']
                     pdh = signal_info['PDH']
                     pdl = signal_info['PDL']
-                    pmh = signal_info['PMH']
+                    pmh = signal_info['PML']
                     pml = signal_info['PML']
                     bos_level = signal_info['BOS_Level']
                     atr = current['ATR']
@@ -246,12 +246,12 @@ class UGBacktestStrategy:
 
                     try:
                         if direction == 'long' and (self.htf_bias == 'uptrend' or self.htf_bias == 'neutral') and (self.qqq_trend == 'up' or self.htf_bias == 'neutral'):
-                            stop_loss = min([pml, pdl, bos_level], default=current['Close'] - 1.0 * atr)
+                            stop_loss = min([pml, pdl, bos_level], default=current['Close'] - 1.5 * atr)
                             stop_loss = max(stop_loss, current['Close'] * 0.95)
                             size = self.calculate_position_size(current['Close'], stop_loss, atr, confidence_score)
                             pos_type = 'long'
                             risk = current['Close'] - stop_loss
-                            take_profit1 = current['Close'] + risk  # 1:1 R:R for TP1
+                            take_profit1 = current['Close'] + 1.5 * risk  # 1.5:1 R:R for TP1
                             kpl = round(current['Close'] / 0.5) * 0.5
                             take_profit2 = min(kpl - 0.5, current['Close'] + self.max_daily_points)
                             if pmh and pmh < take_profit2:
@@ -260,12 +260,12 @@ class UGBacktestStrategy:
                                 take_profit2 = pdh - 0.5
                             take_profit2 = max(take_profit2, take_profit1)  # Ensure TP2 > TP1
                         elif direction == 'short' and self.htf_bias == 'downtrend' and self.qqq_trend == 'down':
-                            stop_loss = max([pmh, pdh, bos_level], default=current['Close'] + 1.0 * atr)
+                            stop_loss = max([pmh, pdh, bos_level], default=current['Close'] + 1.5 * atr)
                             stop_loss = min(stop_loss, current['Close'] * 1.05)
                             size = self.calculate_position_size(current['Close'], stop_loss, atr, confidence_score)
                             pos_type = 'short'
                             risk = stop_loss - current['Close']
-                            take_profit1 = current['Close'] - risk  # 1:1 R:R for TP1
+                            take_profit1 = current['Close'] - 1.5 * risk  # 1.5:1 R:R for TP1
                             kpl = round(current['Close'] / 0.5) * 0.5
                             take_profit2 = max(kpl + 0.5, current['Close'] - self.max_daily_points)
                             if pml and pml > take_profit2:
@@ -277,7 +277,7 @@ class UGBacktestStrategy:
                             logger.debug("Signal rejected at bar %d: direction=%s does not match htf_bias=%s or qqq_trend=%s", 
                                          i, direction, self.htf_bias, self.qqq_trend)
 
-                        if size > 0 and confidence_score >= 3.0:
+                        if size > 0 and confidence_score >= 4.0:
                             entry_price = current['Close'] * (1 + self.slippage if pos_type == 'long' else 1 - self.slippage)
                             self.positions.append({
                                 'entry_price': entry_price,
@@ -326,6 +326,8 @@ class UGBacktestStrategy:
                             self.daily_pnl[day] = self.daily_pnl.get(day, 0) + pnl
                             if pnl < 0:
                                 self.daily_losing_trades[day] = self.daily_losing_trades.get(day, 0) + 1
+                            rr_ratio = (exit_price - entry_price) / (entry_price - stop_loss) if pos['type'] == 'long' else (entry_price - exit_price) / (stop_loss - entry_price)
+                            rr_ratio = rr_ratio if (entry_price - stop_loss) != 0 else np.nan
                             trade_data = {
                                 'entry_time': pos['entry_time'],
                                 'exit_time': timestamp,
@@ -342,7 +344,7 @@ class UGBacktestStrategy:
                                 'reason': 'Timeout',
                                 'result': 'win' if pnl > 0 else 'loss',
                                 'setup_type': 'scalp',
-                                'rr_ratio': (exit_price - entry_price) / (entry_price - stop_loss) if pos['type'] == 'long' else (entry_price - exit_price) / (stop_loss - entry_price),
+                                'rr_ratio': rr_ratio,
                                 'confluences': pos['confluences'],
                                 'entry_bar': pos['entry_bar'],
                                 'exit_bar': i
@@ -362,6 +364,8 @@ class UGBacktestStrategy:
                                 self.daily_pnl[day] = self.daily_pnl.get(day, 0) + pnl
                                 if pnl < 0:
                                     self.daily_losing_trades[day] = self.daily_losing_trades.get(day, 0) + 1
+                                rr_ratio = (exit_price - entry_price) / (entry_price - stop_loss)
+                                rr_ratio = rr_ratio if (entry_price - stop_loss) != 0 else np.nan
                                 trade_data = {
                                     'entry_time': pos['entry_time'],
                                     'exit_time': timestamp,
@@ -378,7 +382,7 @@ class UGBacktestStrategy:
                                     'reason': 'SL Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (exit_price - entry_price) / (entry_price - stop_loss),
+                                    'rr_ratio': rr_ratio,
                                     'confluences': pos['confluences'],
                                     'entry_bar': pos['entry_bar'],
                                     'exit_bar': i
@@ -390,8 +394,8 @@ class UGBacktestStrategy:
                                 logger.debug("Closed position at bar %d: pnl=%.2f, reason=%s", i, pnl, trade_data['reason'])
                             elif current['Close'] >= take_profit1 and not pos['tp1_hit']:
                                 pos['tp1_hit'] = True
-                                pos['stop_loss'] = entry_price  # Trailing stop to breakeven
-                                logger.debug("TP1 hit at bar %d: Adjusted SL to breakeven %.2f", i, entry_price)
+                                pos['stop_loss'] = entry_price + (0.01 * atr)  # Small offset to avoid zero denominator
+                                logger.debug("TP1 hit at bar %d: Adjusted SL to breakeven %.2f", i, pos['stop_loss'])
                             elif current['Close'] >= take_profit2 and pos['tp1_hit']:
                                 exit_price = take_profit2 * (1 - self.slippage)
                                 pnl = (exit_price - entry_price) * size - commission_cost
@@ -399,6 +403,8 @@ class UGBacktestStrategy:
                                 self.daily_pnl[day] = self.daily_pnl.get(day, 0) + pnl
                                 if pnl < 0:
                                     self.daily_losing_trades[day] = self.daily_losing_trades.get(day, 0) + 1
+                                rr_ratio = (exit_price - entry_price) / (entry_price - stop_loss)
+                                rr_ratio = rr_ratio if (entry_price - stop_loss) != 0 else np.nan
                                 trade_data = {
                                     'entry_time': pos['entry_time'],
                                     'exit_time': timestamp,
@@ -415,7 +421,7 @@ class UGBacktestStrategy:
                                     'reason': 'TP2 Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (exit_price - entry_price) / (entry_price - stop_loss),
+                                    'rr_ratio': rr_ratio,
                                     'confluences': pos['confluences'],
                                     'entry_bar': pos['entry_bar'],
                                     'exit_bar': i
@@ -434,6 +440,8 @@ class UGBacktestStrategy:
                                 self.daily_pnl[day] = self.daily_pnl.get(day, 0) + pnl
                                 if pnl < 0:
                                     self.daily_losing_trades[day] = self.daily_losing_trades.get(day, 0) + 1
+                                rr_ratio = (entry_price - exit_price) / (stop_loss - entry_price)
+                                rr_ratio = rr_ratio if (stop_loss - entry_price) != 0 else np.nan
                                 trade_data = {
                                     'entry_time': pos['entry_time'],
                                     'exit_time': timestamp,
@@ -450,7 +458,7 @@ class UGBacktestStrategy:
                                     'reason': 'SL Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (entry_price - exit_price) / (stop_loss - entry_price),
+                                    'rr_ratio': rr_ratio,
                                     'confluences': pos['confluences'],
                                     'entry_bar': pos['entry_bar'],
                                     'exit_bar': i
@@ -462,8 +470,8 @@ class UGBacktestStrategy:
                                 logger.debug("Closed position at bar %d: pnl=%.2f, reason=%s", i, pnl, trade_data['reason'])
                             elif current['Close'] <= take_profit1 and not pos['tp1_hit']:
                                 pos['tp1_hit'] = True
-                                pos['stop_loss'] = entry_price  # Trailing stop to breakeven
-                                logger.debug("TP1 hit at bar %d: Adjusted SL to breakeven %.2f", i, entry_price)
+                                pos['stop_loss'] = entry_price - (0.01 * atr)  # Small offset to avoid zero denominator
+                                logger.debug("TP1 hit at bar %d: Adjusted SL to breakeven %.2f", i, pos['stop_loss'])
                             elif current['Close'] <= take_profit2 and pos['tp1_hit']:
                                 exit_price = take_profit2 * (1 + self.slippage)
                                 pnl = (entry_price - exit_price) * size - commission_cost
@@ -471,6 +479,8 @@ class UGBacktestStrategy:
                                 self.daily_pnl[day] = self.daily_pnl.get(day, 0) + pnl
                                 if pnl < 0:
                                     self.daily_losing_trades[day] = self.daily_losing_trades.get(day, 0) + 1
+                                rr_ratio = (entry_price - exit_price) / (stop_loss - entry_price)
+                                rr_ratio = rr_ratio if (stop_loss - entry_price) != 0 else np.nan
                                 trade_data = {
                                     'entry_time': pos['entry_time'],
                                     'exit_time': timestamp,
@@ -487,7 +497,7 @@ class UGBacktestStrategy:
                                     'reason': 'TP2 Hit',
                                     'result': 'win' if pnl > 0 else 'loss',
                                     'setup_type': 'scalp',
-                                    'rr_ratio': (entry_price - exit_price) / (stop_loss - entry_price),
+                                    'rr_ratio': rr_ratio,
                                     'confluences': pos['confluences'],
                                     'entry_bar': pos['entry_bar'],
                                     'exit_bar': i
