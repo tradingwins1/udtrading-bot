@@ -35,7 +35,7 @@ def detect_ug_signals(tsla_5min_data, tsla_1min_data, key_levels, lookback=3, vo
         df_5min['SMA200'] = SMAIndicator(df_5min['Close'], window=200).sma_indicator()
         df_5min['MACD'] = MACD(df_5min['Close']).macd()
         df_5min['MACD_Signal'] = MACD(df_5min['Close']).macd_signal()
-        h1_data = df_5min.resample('1H').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+        h1_data = df_5min.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
         h1_data['ADX'] = ADXIndicator(h1_data['High'], h1_data['Low'], h1_data['Close'], window=14).adx()
         df_5min['ADX_1H'] = h1_data['ADX'].reindex(df_5min.index, method='ffill')
 
