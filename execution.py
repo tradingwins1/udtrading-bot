@@ -1,7 +1,7 @@
 # execution.py
 import os
 import time
-from ibkr_client import ib, connect_ibkr
+from ibkr_client import ib, IBKRTrader
 from discord_alert import send_alert
 from dotenv import load_dotenv
 import logging
@@ -13,12 +13,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 async def check_entry(trader, candles_df: pd.DataFrame, contract):
     """
     Evaluates entry conditions for a trade based on candlestick data.
-    
     Args:
         trader: IBKRTrader instance for interacting with IBKR.
         candles_df: DataFrame containing candlestick data.
         contract: Contract object for the asset.
-    
     Returns:
         dict: Entry decision with keys 'entry_price', 'stop_loss', 'take_profit', 'direction', and 'score'.
               Returns None if no entry condition is met.
@@ -30,7 +28,6 @@ async def check_entry(trader, candles_df: pd.DataFrame, contract):
     # Get the latest and previous candles
     latest_candle = candles_df.iloc[-1]
     previous_candle = candles_df.iloc[-2] if len(candles_df) > 1 else None
-
     if previous_candle is None:
         logging.info("Not enough candlestick data for entry evaluation.")
         return None
@@ -39,7 +36,6 @@ async def check_entry(trader, candles_df: pd.DataFrame, contract):
     entry_price = latest_candle['close']
     direction = None
     score = 0.5  # Default confidence score
-
     if latest_candle['close'] > previous_candle['high']:
         direction = 'buy'
         stop_loss = previous_candle['low']
@@ -84,12 +80,13 @@ def execute_trades(signals_df, symbol, asset_type, candles_df):
             logging.warning(f"❌ Failed to send no-trade alert: {e}")
         return
 
-    connect_ibkr()
+    trader = IBKRTrader(mode="TWS")  # Use TWS for local execution
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(trader.connect())
 
     for _, row in signals_df.iterrows():
         if row['signal'] is None:
             continue
-
         side = row['signal'].upper()
         entry = row['close']
         sl = entry - 1.0 if side == 'BUY' else entry + 1.0  # Example SL logic
@@ -98,7 +95,6 @@ def execute_trades(signals_df, symbol, asset_type, candles_df):
         # Calculate confidence score
         from scorer import score_setup
         confidence = score_setup(candles_df)
-
         if confidence < 6:
             print(f"[Execution] Low confidence score ({confidence}) for {symbol}, skipping trade")
             try:
@@ -119,7 +115,6 @@ def execute_trades(signals_df, symbol, asset_type, candles_df):
 
         print(f"[Execution] {side} signal for {symbol}")
         print(f"Entry: {entry} | SL: {sl} | TP: {tp}")
-
         try:
             send_alert(
                 symbol=symbol,
@@ -134,8 +129,8 @@ def execute_trades(signals_df, symbol, asset_type, candles_df):
             )
         except Exception as e:
             logging.error(f"❌ Discord alert failed during execution: {e}")
-
+        loop.run_until_complete(trader.place_order(symbol, asset_type, side.lower(), 10, sl=sl, tp=tp))
         time.sleep(0.3)  # Wait 300ms to avoid Discord rate limiting
 
-    ib.disconnect()
-    print("🔌 Disconnected from IBKR")
+    loop.run_until_complete(trader.disconnect())
+    print(f"🔌 Disconnected from IBKR ({trader.mode})")
