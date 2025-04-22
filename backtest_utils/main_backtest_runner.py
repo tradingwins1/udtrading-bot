@@ -12,7 +12,7 @@ def main():
     strategy = UGBacktestStrategy()
 
     logger.info("load_data in dir: %s", os.path.exists("data"))
-    strategy.load_data(
+    data = strategy.load_data(
         "data/TSLA_3M_5min_mock.csv",
         "data/TSLA_3M_1min_mock.csv",
         "data/QQQ_3M_5min_mock.csv",
@@ -20,7 +20,12 @@ def main():
     )
 
     logger.info("Methods: %s", [method for method in dir(strategy) if not method.startswith('_')])
-    strategy.run()
+    
+    # Run backtest with start_bar and end_bar
+    start_bar = 0
+    end_bar = len(data) - 1
+    strategy.run(start_bar, end_bar)
+    
     strategy.save_trades("trades_output.csv")
 
 if __name__ == "__main__":

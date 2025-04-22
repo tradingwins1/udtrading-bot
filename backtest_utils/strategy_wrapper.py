@@ -56,6 +56,8 @@ class UGBacktestStrategy:
         self.qqq_1min_data.set_index('timestamp', inplace=True)
         logger.info("Loaded %s with shape: %s", qqq_1min_path, self.qqq_1min_data.shape)
 
+        return self.tsla_5min_data
+
     def log_rejection(self, timestamp, reason, **kwargs):
         logger.debug("Rejection at %s: %s, kwargs: %s", timestamp, reason, kwargs)
         self.rejections.append({'timestamp': timestamp, 'reason': reason, **kwargs})
@@ -174,25 +176,61 @@ class UGBacktestStrategy:
                         signals.loc[i, 'orb_short'] = True
         return signals
 
-    def detect_elliott_wave_confirmation(self, data_5min, data_1h, direction):
-        logger.debug("Detecting Elliott Wave confirmation for %s direction", direction)
+    def detect_elliott_wave_confirmation(self, data_5min, data_1h, direction, signal_type):
+        logger.debug("Detecting Elliott Wave confirmation for %s direction, signal_type=%s", direction, signal_type)
         data_5min = data_5min.copy()
         data_1h = data_1h.copy()
 
-        wave_confirmation = True
-        if len(data_5min) >= 50:
-            recent_high = data_5min['high'].iloc[-50:].max()
-            recent_low = data_5min['low'].iloc[-50:].min()
-            diff = recent_high - recent_low
+        wave_confirmation = False
+        if len(data_5min) < 50:
+            logger.debug("Insufficient data for Elliott Wave analysis")
+            return wave_confirmation
+
+        # Get recent price range
+        recent_high = data_5min['high'].iloc[-50:].max()
+        recent_low = data_5min['low'].iloc[-50:].min()
+        current_price = data_5min['close'].iloc[-1]
+        diff = recent_high - recent_low
+
+        # For break_and_retest signals, restrict to Wave 2, Wave 4, or OB continuation
+        if signal_type in ['break_and_retest (Long)', 'break_and_retest (Short)']:
+            # Identify prior impulsive move
+            prior_high = data_5min['high'].iloc[-50:-25].max()
+            prior_low = data_5min['low'].iloc[-50:-25].min()
+            impulse_diff = prior_high - prior_low
+
+            # Fibonacci levels for retracement
+            fib_382 = prior_high - impulse_diff * 0.382 if direction == 'long' else prior_low + impulse_diff * 0.382
+            fib_50 = prior_high - impulse_diff * 0.5 if direction == 'long' else prior_low + impulse_diff * 0.5
+            fib_618 = prior_high - impulse_diff * 0.618 if direction == 'long' else prior_low + impulse_diff * 0.618
+
+            # Check if current price is in retracement zone (Wave 2 or 4)
+            retracement_zone = fib_382 <= current_price <= fib_618 if direction == 'long' else fib_618 <= current_price <= fib_382
+
+            # Check for OB continuation (high-volume zone retest)
+            volume_sma = data_5min['volume'].rolling(window=20).mean().iloc[-1]
+            high_volume = data_5min['volume'].iloc[-5:].mean() > volume_sma * 1.5
+            price_near_prior_level = abs(current_price - prior_high) / impulse_diff < 0.1 if direction == 'long' else abs(current_price - prior_low) / impulse_diff < 0.1
+
+            # Wave 2 or 4: Retracement in 38.2-61.8% zone, no overlap with prior low (Wave 4)
+            wave_2_4 = retracement_zone and (current_price > prior_low if direction == 'long' else current_price < prior_high)
+            # OB continuation: High-volume zone retest
+            ob_continuation = high_volume and price_near_prior_level
+
+            wave_confirmation = wave_2_4 or ob_continuation
+            logger.debug("Break and retest EW check: wave_2_4=%s, ob_continuation=%s, retracement_zone=%s, high_volume=%s",
+                         wave_2_4, ob_continuation, retracement_zone, high_volume)
+        else:
+            # Original logic for other signals (e.g., bos)
             fib_0 = recent_high if direction == 'long' else recent_low
             fib_786 = recent_high - diff * 0.786 if direction == 'long' else recent_low + diff * 0.786
-            current_price = data_5min['close'].iloc[-1]
             if direction == 'long':
                 wave_confirmation = fib_786 <= current_price <= fib_0
             else:
                 wave_confirmation = fib_0 <= current_price <= fib_786
 
-        logger.debug("Elliott Wave confirmation: direction=%s, confirmed=%s", direction, wave_confirmation)
+        logger.debug("Elliott Wave confirmation: direction=%s, signal_type=%s, confirmed=%s",
+                     direction, signal_type, wave_confirmation)
         return wave_confirmation
 
     def check_news_event(self, current, bar):
@@ -207,24 +245,26 @@ class UGBacktestStrategy:
     def check_displacement_candle(self, data_slice, direction):
         logger.debug("Checking displacement candle for %s", direction)
         if len(data_slice) < 1:
+            logger.debug("Insufficient data for displacement candle check")
             return False
         latest_candle = data_slice.iloc[-1]
         body_size = abs(latest_candle['close'] - latest_candle['open'])
         candle_range = latest_candle['high'] - latest_candle['low']
         body_ratio = body_size / candle_range if candle_range != 0 else 0
         if direction == 'long':
-            close_at_high = (latest_candle['close'] - latest_candle['low']) / candle_range > 0.7 if candle_range != 0 else False
-            return body_ratio > 0.5 and close_at_high
+            close_at_high = (latest_candle['close'] - latest_candle['low']) / candle_range > 0.4 if candle_range != 0 else False
+            return body_ratio > 0.3 and close_at_high
         else:
-            close_at_low = (latest_candle['high'] - latest_candle['close']) / candle_range > 0.7 if candle_range != 0 else False
-            return body_ratio > 0.5 and close_at_low
+            close_at_low = (latest_candle['high'] - latest_candle['close']) / candle_range > 0.4 if candle_range != 0 else False
+            return body_ratio > 0.3 and close_at_low
 
     def check_momentum(self, data_slice, direction):
         logger.debug("Checking momentum for %s", direction)
-        if len(data_slice) < 2:
+        if len(data_slice) < 20:
+            logger.debug("Insufficient data for momentum check")
             return False
         latest = data_slice.iloc[-1]
-        volume_spike = latest['volume'] > data_slice['volume'].rolling(window=20).mean().iloc[-1] * 1.2
+        volume_spike = latest['volume'] > data_slice['volume'].rolling(window=20).mean().iloc[-1] * 1.05
         return volume_spike
 
     def calculate_option_metrics(self, stock_price, buy_strike, sell_strike, days_to_expiry, iv):
@@ -232,7 +272,7 @@ class UGBacktestStrategy:
                      stock_price, buy_strike, sell_strike, days_to_expiry, iv)
         risk_free_rate = 0.04
         t = days_to_expiry / 365
-        if t <= 0:
+        if t <= 0 or np.isnan(stock_price):
             return 0.05, (sell_strike - buy_strike) * 100 * 0.1, 0.5
         d1 = (math.log(stock_price / buy_strike) + (risk_free_rate + iv**2 / 2) * t) / (iv * math.sqrt(t))
         d2 = d1 - iv * math.sqrt(t)
@@ -275,7 +315,8 @@ class UGBacktestStrategy:
         predictions = forecast['yhat'].values
         return predictions[:len(data)]
 
-    def run(self):
+    def run(self, start_bar, end_bar):
+        # Compute multi-timeframe trends
         self.tsla_daily = self.get_mtf_trend(self.tsla_5min_data, 'D')
         self.tsla_4h = self.get_mtf_trend(self.tsla_5min_data, '4H')
         self.tsla_1h = self.get_mtf_trend(self.tsla_5min_data, '1H')
@@ -283,10 +324,13 @@ class UGBacktestStrategy:
         self.qqq_4h = self.get_mtf_trend(self.qqq_5min_data, '4H')
         self.qqq_1h = self.get_mtf_trend(self.qqq_5min_data, '1H')
 
+        # Identify liquidity zones
         self.tsla_liquidity_zones = self.identify_liquidity_zones(self.tsla_5min_data, 'D')
 
+        # Calculate key levels (PMH, PML, PDH, PDL)
         self.key_levels, self.daily_levels = self.calculate_key_levels(self.tsla_5min_data)
 
+        # Compute technical indicators for 5min data
         self.tsla_5min_data = self.get_mtf_trend(self.tsla_5min_data)
         self.qqq_5min_data = self.get_mtf_trend(self.qqq_5min_data)
         self.tsla_5min_data['time'] = self.tsla_5min_data.index.time
@@ -308,9 +352,11 @@ class UGBacktestStrategy:
         self.tsla_5min_data['vwap'] = vwap
         self.tsla_5min_data['vwap_dev'] = (self.tsla_5min_data['close'] - vwap) / vwap
 
+        # Precompute Prophet predictions
         prophet_movements = self.precompute_prophet_predictions(self.tsla_5min_data)
         self.tsla_5min_data['prophet_movement'] = prophet_movements
 
+        # Detect trading signals
         signals = pd.DataFrame(index=self.tsla_5min_data.index)
         bos_signals = self.detect_ug_signals(self.tsla_5min_data)
         break_retest_signals = self.detect_break_and_retest(self.tsla_5min_data)
@@ -329,7 +375,8 @@ class UGBacktestStrategy:
         equity = self.initial_capital
         open_positions = []
 
-        for i in range(200, len(self.tsla_5min_data)):
+        # Process each bar within the specified range
+        for i in range(max(200, start_bar), min(end_bar + 1, len(self.tsla_5min_data))):
             current = self.tsla_5min_data.iloc[i]
             timestamp = self.tsla_5min_data.index[i]
             bar = i
@@ -341,6 +388,7 @@ class UGBacktestStrategy:
 
             logger.debug("Processing bar %d, timestamp=%s", bar, timestamp)
 
+            # Manage open positions
             for trade in open_positions[:]:
                 days_to_expiry = max(0, (trade['expiry_date'] - timestamp).total_seconds() / (24 * 3600))
                 _, current_value, _ = self.calculate_option_metrics(
@@ -348,6 +396,12 @@ class UGBacktestStrategy:
                 )
                 current_value *= trade['size']
                 max_loss = trade['max_loss']
+                target_profit = trade['entry_value'] * 8.0
+                if 'highest_value' not in trade:
+                    trade['highest_value'] = current_value
+                else:
+                    trade['highest_value'] = max(trade['highest_value'], current_value)
+                trailing_stop = trade['highest_value'] * 0.70
                 if current_value < trade['entry_value'] - max_loss:
                     self.close_position(
                         timestamp, current['close'], 'Loss Limit Exceeded', trade['signal_type'],
@@ -358,20 +412,54 @@ class UGBacktestStrategy:
                     open_positions.remove(trade)
                     equity += current_value
                     logger.info("Equity updated after loss limit: %.2f", equity)
-                time_since_entry = (timestamp - trade['entry_time']).total_seconds()
-                if time_since_entry >= 1800:
-                    price_move = abs(current['close'] - trade['entry_stock_price']) / trade['entry_stock_price']
-                    if price_move < 0.005:
+                elif trade['direction'] == 'long' and current_value < trailing_stop:
+                    self.close_position(
+                        timestamp, current['close'], 'Trailing Stop Hit', trade['signal_type'],
+                        trade['entry_time'], trade['entry_stock_price'], trade['size'],
+                        trade['direction'], self.tsla_5min_data.iloc[i-20:i+1], trade
+                    )
+                    self.trades.append(trade)
+                    open_positions.remove(trade)
+                    equity += current_value
+                    logger.info("Equity updated after trailing stop: %.2f", equity)
+                elif current_value >= target_profit:
+                    self.close_position(
+                        timestamp, current['close'], 'Profit Target Reached', trade['signal_type'],
+                        trade['entry_time'], trade['entry_stock_price'], trade['size'],
+                        trade['direction'], self.tsla_5min_data.iloc[i-20:i+1], trade
+                    )
+                    self.trades.append(trade)
+                    open_positions.remove(trade)
+                    equity += current_value
+                    logger.info("Equity updated after profit target: %.2f", equity)
+                else:
+                    time_since_entry = (timestamp - trade['entry_time']).total_seconds()
+                    if time_since_entry >= 21600 and current_value > trade['entry_value']:
                         self.close_position(
-                            timestamp, current['close'], 'Time-based SL', trade['signal_type'],
+                            timestamp, current['close'], 'Time-based Profit Exit', trade['signal_type'],
                             trade['entry_time'], trade['entry_stock_price'], trade['size'],
                             trade['direction'], self.tsla_5min_data.iloc[i-20:i+1], trade
                         )
                         self.trades.append(trade)
                         open_positions.remove(trade)
                         equity += current_value
-                        logger.info("Equity updated after time-based SL: %.2f", equity)
+                        logger.info("Equity updated after time-based profit exit: %.2f", equity)
 
+            # Commenting out minimum time between trades to allow more frequent trades
+            # Enforce minimum time between trades
+            # time_diff = 0
+            # if self.last_trade_time is not None:
+            #     time_diff = (timestamp - self.last_trade_time).total_seconds()
+            # if time_diff < 1200:
+            #     logger.debug("Skipping trade at bar %d: Recent trade within 1200 seconds", bar)
+            #     continue
+
+            # Check for news events
+            if self.check_news_event(current, bar):
+                self.log_rejection(timestamp, "News event detected, skipping trade", bar=bar)
+                continue
+
+            # Detect new signals
             matching_signals = []
             if signals['bos_long'].iloc[i]:
                 matching_signals.append(('bos (Long)', 'long'))
@@ -384,17 +472,12 @@ class UGBacktestStrategy:
 
             logger.debug("Found %d matching signals for bar %d, timestamp=%s", len(matching_signals), bar, timestamp)
 
-            if self.last_trade_time is not None:
-                time_diff = (timestamp - self.last_trade_time).total_seconds()
-                if time_diff < 1800:
-                    logger.debug("Skipping trade at bar %d: Recent trade within 1800 seconds", bar)
-                    continue
-
-            if self.check_news_event(current, bar):
-                self.log_rejection(timestamp, "News event detected, skipping trade", bar=bar)
-                continue
-
+            # Queue new signals
             for signal_type, direction in matching_signals:
+                open_position_types = [trade['signal_type'] for trade in open_positions]
+                if signal_type in open_position_types:
+                    logger.debug("Skipping trade at bar %d: Already an open position with signal type %s", bar, signal_type)
+                    continue
                 confluences = {
                     'Uptrend': current['trend_bullish'],
                     'Downtrend': current['trend_bearish'],
@@ -409,6 +492,7 @@ class UGBacktestStrategy:
                     'wait_until': timestamp + timedelta(minutes=15)
                 })
 
+            # Process pending signals
             for pending in self.pending_signals[:]:
                 if timestamp >= pending['wait_until']:
                     signal_type = pending['signal_type']
@@ -425,42 +509,28 @@ class UGBacktestStrategy:
                     qqq_data = self.qqq_5min_data.loc[self.qqq_5min_data.index <= timestamp].iloc[-1] if timestamp in self.qqq_5min_data.index else self.qqq_5min_data.iloc[i]
                     confluences['Uptrend'] = current_data['trend_bullish']
                     confluences['Downtrend'] = current_data['trend_bearish']
-                    confluences['QQQ Aligned'] = (qqq_data['trend'] == 'bullish' and direction == 'long') or \
-                                                 (qqq_data['trend'] == 'bearish' and direction == 'short')
+                    confluences['QQQ Aligned'] = True
 
-                    if confluences['Uptrend']:
-                        if direction == 'short':
-                            data_1h = self.tsla_1min_data.resample('h').agg({
-                                'open': 'first',
-                                'high': 'max',
-                                'low': 'min',
-                                'close': 'last',
-                                'volume': 'sum'
-                            }).dropna()
-                            ew_confirmation = self.detect_elliott_wave_confirmation(self.tsla_5min_data.iloc[i-50:i+1], data_1h, 'short')
-                            if not ew_confirmation:
-                                self.log_rejection(timestamp, f"Trend or QQQ alignment mismatch after 15-min wait: direction={direction}, uptrend={confluences['Uptrend']}, downtrend={confluences['Downtrend']}, QQQ Aligned={confluences['QQQ Aligned']}", signal_type=signal_type)
-                                self.pending_signals.remove(pending)
-                                continue
-                    elif confluences['Downtrend'] and direction == 'long':
-                        self.log_rejection(timestamp, f"Trend or QQQ alignment mismatch after 15-min wait: direction={direction}, uptrend={confluences['Uptrend']}, downtrend={confluences['Downtrend']}, QQQ Aligned={confluences['QQQ Aligned']}", signal_type=signal_type)
-                        self.pending_signals.remove(pending)
-                        continue
-                    if not confluences['QQQ Aligned']:
-                        self.log_rejection(timestamp, f"Trend or QQQ alignment mismatch after 15-min wait: direction={direction}, uptrend={confluences['Uptrend']}, downtrend={confluences['Downtrend']}, QQQ Aligned={confluences['QQQ Aligned']}", signal_type=signal_type)
-                        self.pending_signals.remove(pending)
-                        continue
+                    # Check trend compatibility for short trades
+                    if direction == 'short':
+                        if confluences['Uptrend'] or not confluences['Downtrend']:
+                            self.log_rejection(timestamp, f"Trend mismatch for short: direction={direction}, uptrend={confluences['Uptrend']}, downtrend={confluences['Downtrend']}", signal_type=signal_type)
+                            self.pending_signals.remove(pending)
+                            continue
 
+                    # Check displacement candle
                     if not self.check_displacement_candle(self.tsla_5min_data.iloc[i-1:i+1], direction):
                         self.log_rejection(timestamp, "No strong displacement candle after 15-min wait", signal_type=signal_type)
                         self.pending_signals.remove(pending)
                         continue
 
+                    # Check momentum
                     if not self.check_momentum(self.tsla_5min_data.iloc[i-20:i+1], direction):
                         self.log_rejection(timestamp, "Insufficient momentum after 15-min wait", signal_type=signal_type)
                         self.pending_signals.remove(pending)
                         continue
 
+                    # Check Elliott Wave confirmation for long trades or shorts in uptrend
                     if direction == 'long' or (direction == 'short' and confluences['Uptrend']):
                         data_1h = self.tsla_1min_data.resample('h').agg({
                             'open': 'first',
@@ -469,18 +539,18 @@ class UGBacktestStrategy:
                             'close': 'last',
                             'volume': 'sum'
                         }).dropna()
-                        if not self.detect_elliott_wave_confirmation(self.tsla_5min_data.iloc[i-50:i+1], data_1h, direction):
+                        if not self.detect_elliott_wave_confirmation(self.tsla_5min_data.iloc[i-50:i+1], data_1h, direction, signal_type):
                             self.log_rejection(timestamp, "No Elliott Wave confirmation after 15-min wait", signal_type=signal_type)
                             self.pending_signals.remove(pending)
                             continue
 
-                    momentum_up = current_data['rsi'] < 60
-                    momentum_down = current_data['rsi'] > 40
-                    strong_trend = current_data['adx'] > 20
-                    logger.debug("Momentum check after 15-min wait: RSI=%.2f, ADX=%.2f, strong_trend=%s, momentum_up=%s, momentum_down=%s",
-                                 current_data['rsi'], current_data['adx'], strong_trend, momentum_up, momentum_down)
+                    # Check momentum indicators
+                    momentum_up = current_data['rsi'] < 80
+                    momentum_down = current_data['rsi'] > 30
+                    logger.debug("Momentum check after 15-min wait: RSI=%.2f, ADX=%.2f, momentum_up=%s, momentum_down=%s",
+                                 current_data['rsi'], current_data['adx'], momentum_up, momentum_down)
 
-                    if direction == 'long' and not momentum_up and not strong_trend:
+                    if direction == 'long' and not momentum_up:
                         self.log_rejection(timestamp, "Insufficient momentum for long after 15-min wait", signal_type=signal_type)
                         self.pending_signals.remove(pending)
                         continue
@@ -489,21 +559,39 @@ class UGBacktestStrategy:
                             self.log_rejection(timestamp, "Insufficient correction indicators for short in uptrend after 15-min wait", signal_type=signal_type)
                             self.pending_signals.remove(pending)
                             continue
-                    elif direction == 'short' and not momentum_down and not strong_trend:
+                    elif direction == 'short' and not momentum_down:
                         self.log_rejection(timestamp, "Insufficient momentum for short after 15-min wait", signal_type=signal_type)
                         self.pending_signals.remove(pending)
                         continue
 
+                    # Calculate trade parameters
                     buy_strike = current_data['close'] + 1
-                    sell_strike = buy_strike + 4
+                    sell_strike = buy_strike + 6
                     days_to_expiry = 7
                     iv = 0.4
                     spread_delta, net_cost, delta = self.calculate_option_metrics(
                         current_data['close'], buy_strike, sell_strike, days_to_expiry, iv
                     )
-                    size = 3
+                    size = int(3 / max(spread_delta, 0.1))
+                    size = max(1, min(size, 3))
                     entry_value = net_cost * size
-                    max_loss = entry_value * 0.2
+
+                    # Set stop-loss based on the signal candle's low/high
+                    signal_candle = self.tsla_5min_data.iloc[signal_bar]
+                    if direction == 'long':
+                        sl_price = signal_candle['low'] * 0.995  # 0.5% below the low
+                        sl_value = self.calculate_option_metrics(
+                            sl_price, buy_strike, sell_strike, days_to_expiry, iv
+                        )[1] * size
+                        max_loss = entry_value - sl_value
+                        logger.debug("Stop-loss set: sl_price=%.2f, max_loss=%.2f", sl_price, max_loss)
+                    else:
+                        sl_price = signal_candle['high'] * 1.005  # 0.5% above the high
+                        sl_value = self.calculate_option_metrics(
+                            sl_price, buy_strike, sell_strike, days_to_expiry, iv
+                        )[1] * size
+                        max_loss = entry_value - sl_value
+                        logger.debug("Stop-loss set: sl_price=%.2f, max_loss=%.2f", sl_price, max_loss)
 
                     current_date_str = current_date.strftime('%Y-%m-%d')
                     pmh = self.key_levels.get(current_date, {}).get('PMH', np.nan)
@@ -511,14 +599,15 @@ class UGBacktestStrategy:
                     pdh = self.daily_levels.loc[current_date_str, 'PDH'] if current_date_str in self.daily_levels.index else np.nan
                     pdl = self.daily_levels.loc[current_date_str, 'PDL'] if current_date_str in self.daily_levels.index else np.nan
 
+                    # Set take-profit levels
                     if direction == 'long':
-                        tp1_price = pmh if not np.isnan(pmh) and current_data['close'] < pmh else pml
-                        final_tp_price = pdh * 0.995 if not np.isnan(pdh) else current_data['close'] * 1.02
+                        tp1_price = pmh if not np.isnan(pmh) and current_data['close'] < pmh else (pml if not np.isnan(pml) else current_data['close'] * 1.005)
+                        final_tp_price = pdh * 0.99 if not np.isnan(pdh) else current_data['close'] * 1.05
                         if current_data['atr'] / current_data['atr_sma20'] > 1.5:
                             tp1_price = current_data['close'] * (1 + current_data['vwap_dev'] * 0.5)
                     else:
-                        tp1_price = pml if not np.isnan(pml) and current_data['close'] > pml else pmh
-                        final_tp_price = pdl * 1.005 if not np.isnan(pdl) else current_data['close'] * 0.98
+                        tp1_price = pml if not np.isnan(pml) and current_data['close'] > pml else (pmh if not np.isnan(pmh) else current_data['close'] * 0.995)
+                        final_tp_price = pdl * 1.01 if not np.isnan(pdl) else current_data['close'] * 0.95
                         if current_data['atr'] / current_data['atr_sma20'] > 1.5:
                             tp1_price = current_data['close'] * (1 - current_data['vwap_dev'] * 0.5)
 
@@ -534,6 +623,7 @@ class UGBacktestStrategy:
                     logger.debug("Profit calculation after 15-min wait: bar=%d, net_cost=%.2f, size=%d, entry_value=%.2f, tp1_value=%.2f, final_tp_value=%.2f",
                                  bar, net_cost, size, entry_value, tp1_value, final_tp_value)
 
+                    # Create trade record
                     trade = {
                         'entry_time': timestamp,
                         'entry_stock_price': current_data['close'],
@@ -563,6 +653,7 @@ class UGBacktestStrategy:
 
                     self.pending_signals.remove(pending)
 
+        # Close remaining open positions
         for trade in open_positions:
             days_to_expiry = max(0, (trade['expiry_date'] - self.tsla_5min_data.index[-1]).total_seconds() / (24 * 3600))
             _, current_value, _ = self.calculate_option_metrics(
