@@ -1,32 +1,27 @@
+# main_backtest_runner.py
 import logging
-import pandas as pd
+import os
 from strategy_wrapper import UGBacktestStrategy
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def main():
-    # Define data paths
-    tsla_5min_path = 'data/TSLA_3M_5min_mock.csv'
-    tsla_1min_path = 'data/TSLA_3M_1min_mock.csv'
-    qqq_5min_path = 'data/QQQ_3M_5min_mock.csv'
-    qqq_1min_path = 'data/QQQ_3M_1min_mock.csv'
+    logger.info("Loaded strategy_wrapper from: %s", os.path.abspath("strategy_wrapper.py"))
 
-    # Instantiate the strategy
     strategy = UGBacktestStrategy()
 
-    # Load the data
-    strategy.load_data(tsla_5min_path, tsla_1min_path, qqq_5min_path, qqq_1min_path)
+    logger.info("load_data in dir: %s", os.path.exists("data"))
+    strategy.load_data(
+        "data/TSLA_3M_5min_mock.csv",
+        "data/TSLA_3M_1min_mock.csv",
+        "data/QQQ_3M_5min_mock.csv",
+        "data/QQQ_3M_1min_mock.csv"
+    )
 
-    # Initialize models
-    strategy.initialize_models()
-
-    # Run the backtest
+    logger.info("Methods: %s", [method for method in dir(strategy) if not method.startswith('_')])
     strategy.run()
-
-    # Save trades
-    strategy.save_trades('trades_output.csv')
+    strategy.save_trades("trades_output.csv")
 
 if __name__ == "__main__":
     main()
