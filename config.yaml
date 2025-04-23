@@ -1,0 +1,14 @@
+initial_capital: 5000
+risk_per_trade: 0.01
+commission_per_contract: 0.65
+slippage_pct: 0.0005
+min_rr_ratio: 2.0
+trading_window_start: '09:00'
+trading_window_end: '17:00'
+data_dir: 'data'
+tsla_5min_file: 'TSLA_3M_5min_mock.csv'
+tsla_1min_file: 'TSLA_3M_1min_mock.csv'
+qqq_5min_file: 'QQQ_3M_5min_mock.csv'
+qqq_1min_file: 'QQQ_3M_1min_mock.csv'
+output_dir: 'output'
+trades_output_file: 'trades_output.csv'
