@@ -1,10 +1,10 @@
 name: AI Trading Bot CI/CD
 
-on:
-  push:
-    branches: [main]
-  schedule:
-    - cron: "30 13 * * 1-5"  # Runs every weekday at 9:30 AM EST
+# on:
+#  push:
+#    branches: [main]
+ # schedule:
+  #  - cron: "30 13 * * 1-5"  # Runs every weekday at 9:30 AM EST
 
 jobs:
   run-bot:
